@@ -1,5 +1,6 @@
 ﻿using gca.Classes;
 using gca.Classes.Exceptions;
+using gca.Classes.Automation;
 using gca.Script;
 using gca.Enums;
 using gca.Structs;
@@ -23,7 +24,8 @@ namespace gca
 
         private void WorkerLoop()
         {
-
+            while (true)
+            {
             try
             {
                 G();
@@ -226,6 +228,11 @@ namespace gca
                     }
                 }
             }
+            catch (AutomationException e)
+            {
+                try { PauseAutomation(e); continue; }
+                catch (OperationCanceledException) { OnStopped?.Invoke(); }
+            }
             catch (OperationCanceledException)
             {
                 Log.U($"Stop clicker thread. Time running: {RunningTime:hh\\:mm\\:ss\\.fff}");
@@ -245,6 +252,8 @@ namespace gca
                 OnFailed?.Invoke($"Error happened while executing clicker:\n{e.Message}\n\nInner message: {e.InnerException?.Message}\n\nCall stack:\n{e.StackTrace}\n\nTime running: {RunningTime:hh\\:mm\\:ss\\.fff}\n\nCurrent time: {DateTime.Now:dd.MM.yyyy HH:mm:ss.fff}");
             }
 
+            break;
+            }
             clickerThread = null!;
             SetDefaultThreadState();
 

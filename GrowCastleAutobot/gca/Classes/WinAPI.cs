@@ -9,6 +9,30 @@ namespace gca.Classes
 {
     public class WinAPI
     {
+        [DllImport("user32.dll")]
+        public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+
+        [DllImport("user32.dll")]
+        public static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
+
+        [DllImport("user32.dll")]
+        public static extern bool ClientToScreen(IntPtr hwnd, ref Point point);
+
+        [DllImport("user32.dll")]
+        public static extern bool IsIconic(IntPtr hwnd);
+
+        [DllImport("user32.dll")]
+        public static extern bool IsChild(IntPtr parent, IntPtr child);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint message, IntPtr wParam,
+            IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+
+        [DllImport("user32.dll")]
+        public static extern uint MapVirtualKey(uint code, uint mapType);
 
         [DllImport("user32.dll")]
         public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);

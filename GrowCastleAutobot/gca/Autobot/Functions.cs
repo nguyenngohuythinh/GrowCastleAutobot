@@ -1,5 +1,6 @@
 ﻿using gca.Classes;
 using gca.Classes.MouseMove;
+using gca.Classes.Automation;
 using gca.Script;
 using gca.Structs;
 using System.Drawing.Imaging;
@@ -52,6 +53,8 @@ namespace gca
 
         private void OnWindowFreezeDetected()
         {
+            if (backgroundMode)
+                throw new AutomationException("Stale frame: freeze monitor detected identical images. No reset was issued.");
 
             if (screenshotOnFreezing)
             {
@@ -76,11 +79,9 @@ namespace gca
             CheckWindowState();
             if (backgroundMode)
             {
-                currentScreen = CaptureWindow(captureHwnd);
-                if (monitorFreezing)
-                {
-                    CheckForFreeze(currentScreen, DateTime.Now);
-                }
+                var next = CaptureBackground();
+                currentScreen?.Dispose();
+                currentScreen = next;
             }
             else
             {
@@ -127,48 +128,7 @@ namespace gca
             return bmp;
         }
 
-        public Bitmap CaptureWindow(IntPtr hWnd)
-        {
-            if (hWnd == IntPtr.Zero)
-            {
-                throw new ArgumentException("Invalid HWND");
-            }
-
-            if (!WinAPI.GetWindowRect(hWnd, out WinAPI.RECT rect))
-            {
-                throw new Exception("Could not get window bounds");
-            }
-
-            int width = rect.Right - rect.Left;
-            int height = rect.Bottom - rect.Top;
-
-            Bitmap bmp = null!;
-
-            if (currentScreen == null || currentScreen.Width != width || currentScreen.Height != height)
-            {
-                bmp = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            }
-            else
-            {
-                bmp = currentScreen;
-            }
-
-            using (Graphics gfxBmp = Graphics.FromImage(bmp))
-            {
-                IntPtr hdcBitmap = gfxBmp.GetHdc();
-
-                bool succeeded = WinAPI.PrintWindow(hWnd, hdcBitmap, CaptureFlags);
-                gfxBmp.ReleaseHdc(hdcBitmap);
-
-                if (!succeeded)
-                {
-                    bmp.Dispose();
-                    throw new Exception("PrintWindow failed");
-                }
-            }
-
-            return bmp;
-        }
+        public Bitmap CaptureWindow(IntPtr hWnd) => WindowCapture.CaptureRaw(hWnd, CaptureFlags);
 
         public Bitmap CaptureScreen()
         {
@@ -402,6 +362,7 @@ namespace gca
         /// <param name="y2"></param>
         private void RandomMoveInNoBackground(int x1, int y1, int x2, int y2)
         {
+            if (backgroundMode) { RandomMoveIn(x1, y1, x2, y2); return; }
             SetCursorPos(x1 + (int)((x2 - x1) * rand.NextDouble()), y1 + (int)((y2 - y1) * rand.NextDouble()));
         }
         private void RandomMoveInNoBackground(Bounds bounds) => RandomMoveInNoBackground(bounds.x1, bounds.y1, bounds.x2, bounds.y2);
@@ -439,6 +400,7 @@ namespace gca
         /// <param name="key"></param>
         private void SendKey(Enums.Keys key)
         {
+            if (backgroundMode) { BackgroundAction(input => input.Key((uint)key)); return; }
             IntPtr wParam = (IntPtr)key;
             SetForegroundWindow(hwnd);
             SendMessage(hwnd, WM_KEYDOWN, wParam, 0);
@@ -906,55 +868,10 @@ namespace gca
             return index;
         }
 
-        public unsafe bool IsPlainScreen()
+        public bool IsPlainScreen()
         {
-
-            if (currentScreen == null)
-            {
-                Getscreen();
-            }
-
-            Rectangle rect = new Rectangle(0, 0, currentScreen!.Width, currentScreen!.Height);
-            BitmapData data = currentScreen.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
-
-            try
-            {
-
-                int x1 = 42;
-                int y1 = 53;
-                int x2 = 1449;
-                int y2 = 841;
-
-                int step = 13;
-
-                int stride = data.Stride;
-                IntPtr ptr = data.Scan0;
-                int width = currentScreen.Width;
-                int height = currentScreen.Height;
-
-                byte* scan0 = (byte*)ptr;
-
-                int firstPixelColor = *(int*)(scan0 + y1 * stride + x1 * 4);
-
-                for (int y = y1; y <= y2; y+=step)
-                {
-                    byte* row = scan0 + y * stride;
-                    for (int x = x1; x <= x2; x+=step)
-                    {
-                        int pixel = *(int*)(row + x * 4);
-                        if (pixel != firstPixelColor)
-                        {
-                            return false;
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                currentScreen.UnlockBits(data);
-            }
-
-            return true;
+            if (currentScreen == null) G();
+            return FrameHealth.IsBlank(currentScreen!);
         }
 
     }

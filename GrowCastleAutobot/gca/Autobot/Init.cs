@@ -410,6 +410,7 @@ namespace gca
                 (int x, int y, int width, int height) = GetWindowInfo(hwnd);
 
                 backgroundMode = s.BackgroundMode;
+                ResetAutomationSession();
 
                 if (!backgroundMode)
                 {
@@ -424,7 +425,7 @@ namespace gca
                         message += $"Move window {Math.Abs(move)} pxls {(move > 0 ? "down" : "up")}\n\n";
                     }
                 }
-                if (Cst.WINDOW_WIDTH - width != 0)
+                if (!backgroundMode && Cst.WINDOW_WIDTH - width != 0)
                 {
                     int expand = Cst.WINDOW_WIDTH - width;
                     message += $"Expand by {Cst.WINDOW_WIDTH - width}\n\n";
@@ -445,8 +446,8 @@ namespace gca
                 {
                     captureHwnd = renderHwnd;
                     CaptureFlags = 2;
-                    screenShiftX = Cst.LD_X_SHIFT;
-                    screenShiftY = Cst.LD_Y_SHIFT;
+                    screenShiftX = 0;
+                    screenShiftY = 0;
                 }
                 else
                 {
@@ -485,40 +486,13 @@ namespace gca
                 ldPlayerPID = (int)pid;
                 thisPID = Process.GetCurrentProcess().Id;
 
-                ProcessStartInfo psiGetVersion = new ProcessStartInfo
-                {
-                    FileName = ldConsolePath,
-                    Arguments = $"",
+                string infoOutput = RunLdConsole();
 
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
-                };
-
-                using Process getVersionProcess = new Process
-                {
-                    StartInfo = psiGetVersion
-                };
-
-                getVersionProcess.Start();
-
-                string stdout = getVersionProcess.StandardOutput.ReadToEnd();
-                string stderr = getVersionProcess.StandardError.ReadToEnd();
-
-                getVersionProcess.WaitForExit();
-
-                string infoOutput = stdout;
-
-                string infoOutputFirstLine = infoOutput.Split("\n").Where(x => x.Length > 0).First();
+                string infoOutputFirstLine = infoOutput.Split("\n").FirstOrDefault(x => x.Length > 0) ?? "No version returned";
                 Log.I("First line of console output:");
                 Log.I($"{infoOutputFirstLine}");
 
-                if (!string.IsNullOrWhiteSpace(stderr))
-                {
-                    infoOutput += Environment.NewLine + stderr;
-                }
+
 
                 Match match = Regex.Match(infoOutput, @"\d+\.\d+\.\d+\.\d+");
 
@@ -543,38 +517,9 @@ namespace gca
                 }
 
 
-                ProcessStartInfo psiGetInfo = new ProcessStartInfo
-                {
-                    FileName = ldConsolePath,
-                    Arguments = $"list2",
+                string output = RunLdConsole("list2");
 
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
-                };
-
-                using Process infoProcess = new Process
-                {
-                    StartInfo = psiGetInfo
-                };
-
-                infoProcess.Start();
-
-                stdout = infoProcess.StandardOutput.ReadToEnd();
-                stderr = infoProcess.StandardError.ReadToEnd();
-
-                infoProcess.WaitForExit();
-
-                string output = stdout;
-
-                if (!string.IsNullOrWhiteSpace(stderr))
-                {
-                    output += Environment.NewLine + stderr;
-                }
-
-                string? currentEmulatorInfo = output.Split("\n").Where(x => x.Split(",").Length == 10).FirstOrDefault(x => x.Split(",")[1] == windowName);
+                string? currentEmulatorInfo = output.Split("\n").Where(x => x.Split(",").Length == 10).FirstOrDefault(x => x.Split(",")[1] == windowName && long.TryParse(x.Split(",")[2], out var handle) && handle == hwnd.ToInt64());
 
                 if (string.IsNullOrEmpty(currentEmulatorInfo))
                 {
@@ -596,6 +541,7 @@ namespace gca
                 try
                 {
                     string[] parts = currentEmulatorInfo.Split(",");
+                    ldInstanceIndex = int.Parse(parts[0]);
                     resolutionWidth = int.Parse(parts[7]);
                     resolutionHeight = int.Parse(parts[8]);
                 }
@@ -610,6 +556,10 @@ namespace gca
                     message += "Change emulator resolution to 1600x900\n";
                     return false;
                 }
+
+                // Initialize only after the selected title, HWND and list2 entry
+                // resolve to the same 1600x900 instance.
+                InitializeBackground(s.CaptureInnerWindow);
 
             }
 
@@ -626,6 +576,7 @@ namespace gca
             WinAPI.GetCursorPos(out WinAPI.Point cursorPosition);
             previousMousePosition.x = cursorPosition.X;
             previousMousePosition.y = cursorPosition.Y;
+            if (backgroundMode) previousMousePosition = (750, 450);
 
             monitorFreezing = s.MonitorFreezing;
 

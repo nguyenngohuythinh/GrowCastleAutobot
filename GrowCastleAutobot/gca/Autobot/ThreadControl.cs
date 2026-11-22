@@ -18,7 +18,7 @@ namespace gca
         public bool IsActive { get; private set; } = false;
         public bool IsRunning { get; private set; } = false;
 
-        private bool stopRequested = true;
+        private volatile bool stopRequested = true;
 
         private ManualResetEventSlim pauseEvent = new ManualResetEventSlim(true);
         private ManualResetEvent stopWaitHandle = new ManualResetEvent(true);
@@ -55,11 +55,11 @@ namespace gca
                             {
                                 if(captureHwnd == hwnd)
                                 {
-                                    msg += "\nTry to enable 'Capture inner window' option: it is located on the right side of 'Background mode' option. You will have to expand the app horizontally to see it.";
+                                    msg += "\nTry 'Capture inner window', below 'Background mode'.";
                                 }
                                 else
                                 {
-                                    msg += "\nIf you see this message after enabling 'Capture inner window' option - the script cannot capture LDPlayer window in background mode because of some gpu stuff.\nTry to disable 'Background mode' option and message me with the problem or open and issue on Github page of the bot.";
+                                    msg += "\nCapture failed for the LDPlayer render surface. Check the renderer and retry. The bot will not switch to global input.";
                                 }
                             }
                             else
@@ -143,6 +143,8 @@ namespace gca
 
         public bool LDConsoleReboot()
         {
+            if (backgroundMode)
+                throw new gca.Classes.Automation.AutomationException("Window invalid: automatic LDPlayer reboot is disabled in Background mode.");
 
             ProcessStartInfo psiQuit = new ProcessStartInfo
             {
@@ -265,6 +267,7 @@ namespace gca
         }
         private void SetPos(IntPtr hwnd)
         {
+            if (backgroundMode) return;
             Utils.SetDefaultWindowState(hwnd, DisplayInfo.X, DisplayInfo.Y);
             WinAPI.RestoreWindow(hwnd);
             WinAPI.SetWindowPos(hwnd, hwnd, 0, 0, Cst.WINDOW_WIDTH + 1, Cst.WINDOW_HEIGHT + 1, WinAPI.SWP_NOZORDER);
@@ -273,45 +276,14 @@ namespace gca
 
         public void LDConsoleCloseGC()
         {
-            Log.I("Close GC");
-            ProcessStartInfo psi = new ProcessStartInfo
-            {
-                FileName = ldConsolePath,
-                Arguments = $"killapp --name \"{windowName}\" --packagename \"com.raongames.growcastle\"",
-
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-
-            using Process killGCProcess = new Process
-            {
-                StartInfo = psi
-            };
-
-            killGCProcess.Start();
-            killGCProcess.WaitForExit();
+            RunLdConsole("killapp", backgroundMode ? "--index" : "--name",
+                backgroundMode ? ldInstanceIndex.ToString() : windowName, "--packagename", "com.raongames.growcastle");
         }
 
         public void LDConsoleOpenGC()
         {
-            Log.I("Open GC");
-            ProcessStartInfo psi = new ProcessStartInfo
-            {
-                FileName = ldConsolePath,
-                Arguments = $"runapp --name \"{windowName}\" --packagename \"com.raongames.growcastle\"",
-
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-
-            using Process startGCProcess = new Process
-            {
-                StartInfo = psi
-            };
-
-            startGCProcess.Start();
-            startGCProcess.WaitForExit();
-
+            RunLdConsole("runapp", backgroundMode ? "--index" : "--name",
+                backgroundMode ? ldInstanceIndex.ToString() : windowName, "--packagename", "com.raongames.growcastle");
         }
         /// <summary>
         /// Call only from inside of clicker thread
@@ -340,6 +312,7 @@ namespace gca
         /// </summary>
         private void SetStoppedState()
         {
+            ioCancellation.Cancel();
             if (IsActive)
             {
                 OnStopRequested?.Invoke();
@@ -443,7 +416,7 @@ namespace gca
                 SetPausedUI();
             }
 
-            pauseEvent.Wait();
+            pauseEvent.Wait(ioCancellation.Token);
 
             if (IsPaused)
             {
@@ -462,7 +435,7 @@ namespace gca
                 SetPausedUI();
             }
 
-            pauseEvent.Wait();
+            pauseEvent.Wait(ioCancellation.Token);
 
             if (IsPaused)
             {
@@ -482,7 +455,7 @@ namespace gca
                 SetPausedUI();
             }
 
-            pauseEvent.Wait();
+            pauseEvent.Wait(ioCancellation.Token);
 
             if (IsPaused)
             {

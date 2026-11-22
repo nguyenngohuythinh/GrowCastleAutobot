@@ -324,6 +324,14 @@ namespace gca
 
         private void ShowFailed(string message)
         {
+            if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(() => ShowFailed(message)); return; }
+            if (autobot.UsesBackgroundMode || BackgroundModeCheckbox.IsChecked == true)
+            {
+                BackgroundErrorText.Text = message;
+                BackgroundErrorText.Visibility = Visibility.Visible;
+                MyTabControl.Background = Cst.ErrorBackgrounColor;
+                return;
+            }
             WinAPI.ForceBringWindowToFront(this);
             System.Windows.MessageBox.Show(message, "Error", MessageBoxButton.OKCancel, MessageBoxImage.Error);
         }
@@ -497,6 +505,7 @@ namespace gca
         {
             Dispatcher.BeginInvoke(() =>
             {
+                BackgroundErrorText.Visibility = Visibility.Collapsed;
                 ((System.Windows.Controls.Image)StartButton.Content).Source = new BitmapImage(new Uri("Images/Pause.png", UriKind.Relative));
                 StopButton.IsEnabled = true;
                 StartButton.IsEnabled = true;
@@ -574,6 +583,7 @@ namespace gca
 
         public void SetPauseRequestedUI()
         {
+            if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(SetPauseRequestedUI); return; }
             ((System.Windows.Controls.Image)StartButton.Content).Source = new BitmapImage(new Uri("Images/Continue.png", UriKind.Relative));
             ThreadStatusLabel.Content = $"Pause requested";
             ThreadStatusShortcutLabel.Content = string.Empty;

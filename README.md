@@ -1,6 +1,10 @@
 # [Grow castle](https://play.google.com/store/apps/details?id=com.raongames.growcastle) autobot
 
 ## Features
+
+For the updated background capture/input behavior, build commands and LDPlayer
+acceptance checks, see [Background mode](GrowCastleAutobot/BACKGROUND_MODE.md).
+
 * Farm dragons, mat items of selected grades
 * Farm dungeons (collects all runes without exception)
 * Run in background without stealing cursor

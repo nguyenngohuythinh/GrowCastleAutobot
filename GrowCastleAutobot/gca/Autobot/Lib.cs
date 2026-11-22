@@ -1,5 +1,6 @@
 ﻿using gca.Classes;
 using gca.Classes.SettingsScripts;
+using gca.Classes.Automation;
 using gca.Enums;
 using gca.Script;
 using gca.Structs;
@@ -219,6 +220,12 @@ namespace gca
         }
         public bool CheckWindowState()
         {
+            if (backgroundMode)
+            {
+                using var dpi = new PhysicalPixels();
+                backgroundTarget?.Validate();
+                return true;
+            }
             (int x, int y, int width, int height) = GetWindowInfo(hwnd);
 
             if ((x == -32000 && y == -32000) || width != Cst.WINDOW_WIDTH || height != Cst.WINDOW_HEIGHT)
@@ -1468,6 +1475,8 @@ namespace gca
 
         public void Reset()
         {
+            if (backgroundMode)
+                throw new AutomationException("Game state unknown: emulator reset requires manual intervention in Background mode.");
             freezeDetectionEnabled = false;
 
             Log.R($"LDPlayer reset");
@@ -1493,6 +1502,12 @@ namespace gca
 
         public void MakeCleanup()
         {
+            if (backgroundMode)
+            {
+                Log.I("Background mode: skipping emulator reboot during scheduled cleanup.");
+                UpdateCleanupTime();
+                return;
+            }
             Log.I("Do cleanup");
             freezeDetectionEnabled = false;
 
@@ -1528,6 +1543,8 @@ namespace gca
 
         public void Restart()
         {
+            if (backgroundMode)
+                throw new AutomationException("Game state unknown: restart requested. Inspect the game and resume manually.");
             Log.R("Restart");
             int restartCounter = 0;
             restarted = false;
@@ -1901,7 +1918,7 @@ namespace gca
 
             ScreenshotError(true, Cst.SCREENSHOT_HINT_PATH, true);
             Log.F($"unknown hint detected");
-            WinAPI.SetForegroundWindow(hwnd);
+            if (!backgroundMode) WinAPI.SetForegroundWindow(hwnd);
             screenshotCache.SaveAllToFolder(Cst.SCREENSHOT_ERROR_SCREEN_CACHE_PATH);
 
             ScreenshotError(true, Cst.SCREENSHOT_HINT_PATH, true);
@@ -3447,6 +3464,8 @@ namespace gca
 
         public void EscClickStart()
         {
+            if (backgroundMode)
+                throw new AutomationException("Game state unknown: no recognized game/menu after waiting. No ESC or restart was sent.");
 
             Log.W($"try close overlap");
             Log.ST();
