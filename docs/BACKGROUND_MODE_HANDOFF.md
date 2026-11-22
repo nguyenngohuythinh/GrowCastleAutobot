@@ -27,7 +27,7 @@ TASK 05 audited error paths and strengthened the injected capture-failure worker
 
 TASK 06 produced `docs/BACKGROUND_MODE_QA.md`. Automated build/regression passed (0 errors, 7 warnings; 43/43 assertions). Two production Replay cycles completed with VS Code covering LDPlayer (42.9 s and 85.9 s), without observed foreground activation. Chrome-covered capture passed 20/20 frames with 19 changes, mean 32.7 ms, max 54.7 ms. The matrix explicitly leaves untested visible/foreground/optional-feature and mixed-DPI scenarios NOT VERIFIED or PARTIAL. No production source change or commit in TASK 06.
 
-TASK 07 updated usage docs and the existing PR #1 with the observed results. Final isolated Release build passed with 0 errors and 7 warnings; regression passed 43/43 assertions. Remaining limits are in `docs/BACKGROUND_MODE_QA.md`. Commit hashes appear below after recording the task deliverables.
+TASK 07 updated usage docs and the existing PR #1 with the observed results. Final isolated Release build passed with 0 errors and 7 warnings; regression passed 43/43 assertions. Remaining limits are in `docs/BACKGROUND_MODE_QA.md`. Validation and QA commit: `4d528c4` (`Document background mode validation and QA`); a following tracking update commit records this hash.
 
 ## Build and tests
 

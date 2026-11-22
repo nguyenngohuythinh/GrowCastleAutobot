@@ -85,4 +85,4 @@ Files changed for TASK 06: `docs/BACKGROUND_MODE_QA.md`, this tracker and `docs/
 - Existing PR: https://github.com/nguyenngohuythinh/GrowCastleAutobot/pull/1 (base `main`, head `feature/true-background-mode`, open and unmerged at TASK 07 review). Updated its validation summary; no duplicate PR or merge.
 - Remaining limits: see `docs/BACKGROUND_MODE_QA.md` for NOT VERIFIED/PARTIAL cases. Two covered Replay cycles and Chrome capture are observed, but not all farm features or a long WPF worker session.
 
-Files changed for TASK 07: `GrowCastleAutobot/BACKGROUND_MODE.md`, `README.md`, this tracker and `docs/BACKGROUND_MODE_HANDOFF.md`, plus committing the previously uncommitted TASK 03–06 test and QA files. Commit hash is recorded in the handoff after the commit. No further task is selected.
+Files changed for TASK 07: `GrowCastleAutobot/BACKGROUND_MODE.md`, `README.md`, this tracker and `docs/BACKGROUND_MODE_HANDOFF.md`, plus committing the previously uncommitted TASK 03–06 test and QA files. Commit: `4d528c4` (`Document background mode validation and QA`), followed by a tracking update commit for these hash records. No further task is selected.
