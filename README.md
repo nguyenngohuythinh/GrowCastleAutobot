@@ -4,6 +4,8 @@
 
 For the updated background capture/input behavior, build commands and LDPlayer
 acceptance checks, see [Background mode](GrowCastleAutobot/BACKGROUND_MODE.md).
+The [QA matrix](docs/BACKGROUND_MODE_QA.md) separates verified covered Replay
+and capture results from scenarios still awaiting manual testing.
 
 * Farm dragons, mat items of selected grades
 * Farm dungeons (collects all runes without exception)

@@ -13,6 +13,49 @@ using System.Reflection;
 Directory.CreateDirectory("artifacts/run");
 Directory.SetCurrentDirectory(Path.GetFullPath("artifacts/run"));
 
+if (args.Length == 2 && args[0] == "--recognize-frame")
+{
+    using var frame = new Bitmap(args[1]);
+    var bot = new Autobot();
+    typeof(Autobot).GetField("currentScreen", BindingFlags.Instance | BindingFlags.NonPublic)!
+        .SetValue(bot, frame);
+    Console.WriteLine($"Frame {frame.Width}x{frame.Height}; blank={FrameHealth.IsBlank(frame)}; " +
+        $"sky={bot.CheckSky(false)}; menu={bot.CheckGCMenu(false)}");
+    if (FrameHealth.IsBlank(frame) || !bot.CheckSky(false) || !bot.CheckGCMenu(false))
+        throw new Exception("Captured Grow Castle menu was not recognized.");
+    return;
+}
+
+if (args.Length == 2 && args[0] == "--live-input")
+{
+    using var dpi = new PhysicalPixels();
+    var root = WinAPI.FindWindow(null!, args[1]);
+    var render = WinAPI.FindChildWindowByClass(root, "RenderWindow");
+    if (root == IntPtr.Zero || WinAPI.GetForegroundWindow() == root)
+        throw new Exception("Open and cover the selected LDPlayer before testing input.");
+    var bot = new Autobot();
+    void Set(string name, object value) => typeof(Autobot)
+        .GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!.SetValue(bot, value);
+    Set("hwnd", root); Set("renderHwnd", render); Set("backgroundMode", true);
+    typeof(Autobot).GetMethod("InitializeBackground", BindingFlags.Instance | BindingFlags.NonPublic)!
+        .Invoke(bot, new object[] { true });
+    Set("stopRequested", false); Set("thisChronoSlot", -1); Set("screenshotPopups", false);
+    ((ManualResetEvent)typeof(Autobot).GetField("stopWaitHandle", BindingFlags.Instance | BindingFlags.NonPublic)!
+        .GetValue(bot)!).Reset();
+    if (!bot.CheckGCMenu()) throw new Exception("Expected Grow Castle menu before replay input.");
+    var foreground = WinAPI.GetForegroundWindow();
+    WinAPI.GetCursorPos(out var before);
+    bot.PerformReplay();
+    WinAPI.GetCursorPos(out var after);
+    if (WinAPI.GetForegroundWindow() != foreground || WinAPI.GetForegroundWindow() == root)
+        throw new Exception("Foreground changed during background replay input.");
+    if (before.X != after.X || before.Y != after.Y)
+        throw new Exception("Cursor moved during background replay input; repeat without user movement.");
+    if (bot.CheckGCMenu()) throw new Exception("Game did not leave the menu after replay input.");
+    Console.WriteLine("PASS covered replay input: menu changed, foreground and cursor unchanged.");
+    return;
+}
+
 if (args.Length >= 2 && args[0] == "--live-replay")
 {
     using var dpi = new PhysicalPixels();
@@ -162,15 +205,21 @@ void SetField(Autobot bot, string name, object value) => typeof(Autobot)
     .GetField(name,BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(bot,value);
 SetField(faultBot,"backgroundMode",true);
 SetField(faultBot,"stopRequested",false);
-SetField(faultBot,"gameCapture",new FailedCapture());
+var failedCapture = new FailedCapture();
+SetField(faultBot,"gameCapture",failedCapture);
 SetField(faultBot,"waitBetweenBattlesRuntimes",new List<WaitBetweenBattlesRuntime>());
 typeof(Autobot).GetProperty(nameof(Autobot.IsActive))!.SetValue(faultBot,true);
 typeof(Autobot).GetProperty(nameof(Autobot.IsRunning))!.SetValue(faultBot,true);
 using var paused = new ManualResetEventSlim();
-faultBot.OnFailed += _ => paused.Set();
+string? failureMessage = null;
+int failureEvents = 0;
+faultBot.OnFailed += message => { failureMessage = message; failureEvents++; paused.Set(); };
 var worker = new Thread(() => typeof(Autobot).GetMethod("WorkerLoop",BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(faultBot,null));
 worker.Start();
 Check(paused.Wait(3000),"capture recovery exhausted then worker pauses");
+Check(failedCapture.Attempts == 3,"capture makes exactly two retries before pause");
+Check(failureEvents == 1 && failureMessage!.StartsWith("Capture failed:") && failureMessage.Contains("Bot paused."),
+    "single categorized capture error gives a pause instruction");
 Check(faultBot.IsPaused && faultBot.IsActive && !faultBot.IsRunning,"fault pause keeps Stop/Resume available");
 var stopTime = Stopwatch.StartNew();
 faultBot.Stop();
@@ -225,7 +274,12 @@ Console.WriteLine($"{passed} assertions passed.");
 
 sealed class FailedCapture : IGameCapture
 {
-    public Bitmap Capture(CancellationToken cancellationToken) => throw new AutomationException("Capture failed: injected test failure.");
+    public int Attempts { get; private set; }
+    public Bitmap Capture(CancellationToken cancellationToken)
+    {
+        Attempts++;
+        throw new AutomationException("Capture failed: injected test failure.");
+    }
 }
 
 sealed class InputReceiver : System.Windows.Forms.NativeWindow, IDisposable

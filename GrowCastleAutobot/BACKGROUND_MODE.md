@@ -55,6 +55,10 @@ is renderer/version dependent and needs the acceptance checks below.
 The logs distinguish `Capture failed`, `Stale frame`, `Input failed`,
 `Window invalid`, and `Game state unknown`.
 
+For a scenario-by-scenario result table from LDPlayer 9.5.45.0, see
+[the QA report](../docs/BACKGROUND_MODE_QA.md). PASS entries describe only the
+specific behavior observed there; other farm features still need manual checks.
+
 ## Build and deterministic checks
 
 From the repository root, using the pinned .NET SDK 8.0.319:
@@ -75,6 +79,8 @@ Optional live diagnostics (these require an interactive Windows session):
 ```powershell
 dotnet run --project GrowCastleAutobot/gca.Tests -- --capture LDPlayer-1
 dotnet run --project GrowCastleAutobot/gca.Tests -- --live-capture LDPlayer-1
+dotnet run --project GrowCastleAutobot/gca.Tests -- --recognize-frame C:\absolute\path\to\captured-menu.png
+dotnet run --project GrowCastleAutobot/gca.Tests -- --live-input LDPlayer-1
 dotnet run --project GrowCastleAutobot/gca.Tests -- --live-replay LDPlayer-1
 ```
 
@@ -83,14 +89,15 @@ method. It requires the game menu/battle, stops on unknown state or CAPTCHA, and
 does not change your saved bot settings. It is a transport/replay integration
 check, not a full validation of every farm feature or the complete WPF worker UI.
 
-On the available LDPlayer 9.5.45 environment, inner capture continued while VS
-Code covered the emulator: 20/20 frames succeeded, 19 successive comparisons
-changed, averaging 43.2 ms (51.5 ms maximum). A production `PerformReplay` call
-was accepted and entered battle while covered; one cursor sample was unchanged.
-The requested two complete replay cycles were not observed because the instance
-was later minimized and the safety check stopped the run. These results verify
-the capture transport and one replay transition, not unattended farming across
-all game states or features.
+On the available LDPlayer 9.5.45 environment, covered capture succeeded under
+VS Code (20/20 frames, 19 changing comparisons, 31.9 ms average) and Chrome
+(20/20 frames, 19 changes, 32.7 ms average). A captured menu frame passed the
+bot's `CheckSky` and `CheckGCMenu` checks. A production `PerformReplay` call
+changed the game from menu to battle with unchanged foreground and cursor.
+Subsequently, two full `PerformReplay` cycles completed under VS Code cover in
+85.9 seconds without observed LDPlayer activation. The earlier live run had
+stopped safely when LDPlayer was minimized. These results verify the tested
+capture/replay paths, not every farm feature or a long unattended WPF session.
 
 ## Manual acceptance on LDPlayer 9.5.45.0
 
