@@ -40,6 +40,7 @@ namespace gca
         public event Action<string, string, ToolTipIcon>? OnShowBalloon;
 
         public event Action<TimeSpan>? OnRunningTimeUpdate;
+        public event Action<gca.Classes.Automation.RuntimeStatusSnapshot>? OnRuntimeStatusUpdate;
 
         public event Action<string, double>? OnPlayAudio;
 

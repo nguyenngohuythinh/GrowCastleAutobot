@@ -604,7 +604,12 @@
                                       Margin="0,6,0,0"
                                       cmd:TooltipHelper.EnabledTooltip="Prefer the LDPlayer render surface. If disabled, blank outer captures automatically fall back to inner capture."
                                       Content="Capture inner window" Checked="CaptureInnerWindowCheckbox_Checked" Unchecked="CaptureInnerWindowCheckbox_Unchecked"/>
-                            <TextBlock x:Name="BackgroundErrorText" Foreground="DarkRed" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
+                            <CheckBox Name="UseAdbCheckbox"
+                                      Margin="0,6,0,0"
+                                      cmd:TooltipHelper.EnabledTooltip="Uses ADB capture and touch input so you can minimize or hide (Boss Key) LDPlayer while the bot keeps running. Enable 'ADB debugging (Local connection)' in LDPlayer Settings -> Other settings."
+                                      Content="Use ADB (allow minimize/hide LD)" Checked="UseAdbCheckbox_Checked" Unchecked="UseAdbCheckbox_Unchecked"/>
+                            <TextBlock x:Name="BackgroundModeStatusText" Foreground="#FF1F4E79" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                            <TextBlock x:Name="BackgroundErrorText" Foreground="DarkRed" TextWrapping="Wrap" Margin="0,4,0,0" Visibility="Collapsed"/>
                         </StackPanel>
 
                         <Canvas Grid.Row="6" Height="1490" VerticalAlignment="Top" Grid.RowSpan="5" Grid.ColumnSpan="2">

@@ -133,8 +133,8 @@ namespace gca.Classes
         {
             if (workerThread != null && workerThread.IsAlive)
             {
-                cts.Cancel();
-                pauseEvent.Set();
+                try { cts?.Cancel(); } catch { }
+                try { pauseEvent.Set(); } catch { }
             }
             isActive = false;
             isElapsed = false;
@@ -143,7 +143,7 @@ namespace gca.Classes
         public void Dispose()
         {
             FinishCurrentThread();
-            userControl.ResetUIQueued();
+            userControl?.ResetUIQueued();
             workerThread = null!;
         }
 
@@ -310,7 +310,19 @@ namespace gca.Classes
             isSuspended = false;
             while (stopwatch.Elapsed < currentDuration)
             {
-                pauseEvent.Wait();
+                try
+                {
+                    pauseEvent.Wait(token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+
+                if (token.IsCancellationRequested)
+                {
+                    return;
+                }
 
                 TimeSpan remaining = currentDuration - stopwatch.Elapsed;
 
@@ -318,13 +330,10 @@ namespace gca.Classes
 
                 userControl.SetTriggerTimeLeft(remaining, percent);
 
-                Thread.Sleep(37);
-
-                if (token.IsCancellationRequested)
+                if (token.WaitHandle.WaitOne(37))
                 {
                     return;
                 }
-
             }
 
             isElapsed = true;

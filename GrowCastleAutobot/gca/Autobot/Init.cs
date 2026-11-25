@@ -399,8 +399,108 @@ namespace gca
 
             coordNotTakenCounter = 0;
             hwnd = GetLDPlayerWindow();
+            backgroundMode = s.BackgroundMode;
+            useAdb = s.BackgroundMode && s.UseAdb;
+            ResetAutomationSession();
 
-            if (hwnd == IntPtr.Zero)
+            if (useAdb)
+            {
+                string? directory = Classes.Automation.AdbTarget.FindLdPlayerDirectory(hwnd);
+                if (string.IsNullOrEmpty(directory))
+                {
+                    message += "Couldn't find LDPlayer install folder (ldconsole.exe). Start LDPlayer or check installation.\n";
+                    return false;
+                }
+
+                string consolePath = Path.Combine(directory, "ldconsole.exe");
+                string adbPath = Path.Combine(directory, "adb.exe");
+                if (!File.Exists(consolePath))
+                {
+                    message += $"Couldn't find ldconsole.exe at: {consolePath}\n";
+                    return false;
+                }
+                if (!File.Exists(adbPath))
+                {
+                    message += $"Couldn't find adb.exe at: {adbPath}\n";
+                    return false;
+                }
+
+                ldConsolePath = consolePath;
+                thisPID = Process.GetCurrentProcess().Id;
+
+                string output;
+                try
+                {
+                    output = RunLdConsole("list2");
+                }
+                catch (Classes.Automation.AutomationException e)
+                {
+                    message += e.Message + "\n";
+                    return false;
+                }
+
+                var entries = output.Split("\n")
+                    .Select(x => x.Trim())
+                    .Where(x => x.Split(",").Length == 10)
+                    .ToList();
+
+                string? currentEmulatorInfo = null;
+                if (hwnd != IntPtr.Zero)
+                {
+                    currentEmulatorInfo = entries.FirstOrDefault(x =>
+                        x.Split(",")[1] == windowName &&
+                        long.TryParse(x.Split(",")[2], out var handle) && handle == hwnd.ToInt64());
+                }
+                currentEmulatorInfo ??= entries.FirstOrDefault(x => x.Split(",")[1] == windowName);
+
+                if (string.IsNullOrEmpty(currentEmulatorInfo))
+                {
+                    message += $"Couldn't find LDPlayer instance '{windowName}' in ldconsole list2.\n";
+                    string windowNameLower = windowName.ToLower();
+                    string? possibleWindow = entries
+                        .FirstOrDefault(x => x.Split(",")[1].ToLower() == windowNameLower)?
+                        .Split(",")[1];
+                    if (possibleWindow != null)
+                    {
+                        message += $"Found emulator: '{possibleWindow}'. Check letter case in window name!\n";
+                    }
+                    return false;
+                }
+
+                Log.I($"LDPlayer ADB info: {currentEmulatorInfo}");
+
+                int resolutionWidth;
+                int resolutionHeight;
+                try
+                {
+                    string[] parts = currentEmulatorInfo.Split(",");
+                    ldInstanceIndex = int.Parse(parts[0]);
+                    resolutionWidth = int.Parse(parts[7]);
+                    resolutionHeight = int.Parse(parts[8]);
+                }
+                catch
+                {
+                    message += "Couldn't get emulator resolution\n";
+                    return false;
+                }
+
+                if (resolutionWidth != 1600 || resolutionHeight != 900)
+                {
+                    message += "Change emulator resolution to 1600x900\n";
+                    return false;
+                }
+
+                try
+                {
+                    InitializeAdb(adbPath, ldInstanceIndex, resolutionWidth, resolutionHeight);
+                }
+                catch (Classes.Automation.AutomationException e)
+                {
+                    message += e.Message + "\n";
+                    return false;
+                }
+            }
+            else if (hwnd == IntPtr.Zero)
             {
                 message += $"Didn't find window: {windowName}\n";
                 return false;
@@ -408,9 +508,6 @@ namespace gca
             else
             {
                 (int x, int y, int width, int height) = GetWindowInfo(hwnd);
-
-                backgroundMode = s.BackgroundMode;
-                ResetAutomationSession();
 
                 if (!backgroundMode)
                 {
@@ -559,7 +656,15 @@ namespace gca
 
                 // Initialize only after the selected title, HWND and list2 entry
                 // resolve to the same 1600x900 instance.
-                InitializeBackground(s.CaptureInnerWindow);
+                try
+                {
+                    InitializeBackground(s.CaptureInnerWindow);
+                }
+                catch (Classes.Automation.AutomationException e)
+                {
+                    message += e.Message + "\n";
+                    return false;
+                }
 
             }
 
@@ -595,7 +700,8 @@ namespace gca
 
             doSaveBeforeCleanup = s.DoSaveOnCleanup;
 
-            maxRestartsForReset = s.MaxRestartsForReset;
+            maxRestartsForReset = Math.Max(1, s.MaxRestartsForReset);
+            restartGuard.Configure(maxConsecutiveRestarts: Math.Max(2, maxRestartsForReset + 1));
 
             orcBandOnSkipOnly = s.OrcbandOnSkipOnly;
             militaryFOnSkipOnly = s.MilitaryFOnSkipOnly;

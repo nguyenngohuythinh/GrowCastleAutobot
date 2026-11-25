@@ -46,16 +46,17 @@ namespace gca.Classes
             }
         }
 
+        private static readonly ImageCodecInfo JpegEncoder = ImageCodecInfo.GetImageEncoders()
+            .First(c => c.FormatID == ImageFormat.Jpeg.Guid);
+
         public static byte[] CompressToJpeg(Bitmap bmp, long quality)
         {
-            using var ms = new MemoryStream();
+            using var ms = new MemoryStream(65536);
+            using var encoderParams = new EncoderParameters(1);
+            using var qualityParam = new EncoderParameter(Encoder.Quality, quality);
+            encoderParams.Param[0] = qualityParam;
 
-            var encoder = ImageCodecInfo.GetImageDecoders()
-                .First(c => c.FormatID == ImageFormat.Jpeg.Guid);
-            var encoderParams = new EncoderParameters(1);
-            encoderParams.Param[0] = new EncoderParameter(Encoder.Quality, quality);
-
-            bmp.Save(ms, encoder, encoderParams);
+            bmp.Save(ms, JpegEncoder, encoderParams);
             return ms.ToArray();
         }
 

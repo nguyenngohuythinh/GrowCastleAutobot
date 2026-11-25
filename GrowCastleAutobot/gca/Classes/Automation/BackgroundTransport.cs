@@ -5,7 +5,51 @@ using System.Drawing.Imaging;
 
 namespace gca.Classes.Automation;
 
-public sealed class AutomationException(string message) : Exception(message);
+public sealed class AutomationException : Exception
+{
+    public AutomationErrorKind Kind { get; }
+    public bool IsRetryable { get; }
+
+    public AutomationException(string message)
+        : this(Classify(message), message)
+    {
+    }
+
+    public AutomationException(AutomationErrorKind kind, string message, bool? isRetryable = null)
+        : base(message)
+    {
+        Kind = kind;
+        IsRetryable = isRetryable ?? DefaultRetryable(kind);
+    }
+
+    public static AutomationErrorKind Classify(string message)
+    {
+        if (string.IsNullOrEmpty(message)) return AutomationErrorKind.Unknown;
+        if (message.StartsWith("Capture failed:", StringComparison.OrdinalIgnoreCase))
+        {
+            if (message.Contains("exceeded", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("timed out", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("still running", StringComparison.OrdinalIgnoreCase))
+                return AutomationErrorKind.CaptureTimeout;
+            return AutomationErrorKind.CaptureFailed;
+        }
+        if (message.StartsWith("Stale frame:", StringComparison.OrdinalIgnoreCase))
+            return AutomationErrorKind.StaleFrame;
+        if (message.StartsWith("Input failed:", StringComparison.OrdinalIgnoreCase))
+            return AutomationErrorKind.InputFailed;
+        if (message.StartsWith("Window invalid:", StringComparison.OrdinalIgnoreCase))
+            return AutomationErrorKind.WindowInvalid;
+        if (message.StartsWith("Game state unknown:", StringComparison.OrdinalIgnoreCase))
+            return AutomationErrorKind.GameStateUnknown;
+        if (message.StartsWith("Restart limit", StringComparison.OrdinalIgnoreCase) ||
+            message.StartsWith("Restart loop", StringComparison.OrdinalIgnoreCase))
+            return AutomationErrorKind.RestartLimitReached;
+        return AutomationErrorKind.Unknown;
+    }
+
+    public static bool DefaultRetryable(AutomationErrorKind kind) =>
+        kind is AutomationErrorKind.CaptureTimeout or AutomationErrorKind.CaptureFailed;
+}
 
 public interface IGameCapture
 {
@@ -34,18 +78,116 @@ public static class GameCoordinates
             (int)((long)(y - Viewport.Y) * client.Height / Viewport.Height));
     }
 
-    public static Bitmap Normalize(Bitmap source, Rectangle sourceArea)
+    public static unsafe Bitmap Normalize(Bitmap source, Rectangle sourceArea)
     {
         if (sourceArea.Width <= 0 || sourceArea.Height <= 0 ||
             !new Rectangle(Point.Empty, source.Size).Contains(sourceArea))
             throw new AutomationException("Capture failed: render bounds are outside the captured image.");
+
         var result = new Bitmap(Cst.WINDOW_WIDTH, Cst.WINDOW_HEIGHT, PixelFormat.Format32bppArgb);
-        using var graphics = Graphics.FromImage(result);
-        graphics.Clear(Color.Black);
-        graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
-        graphics.PixelOffsetMode = PixelOffsetMode.Half;
-        graphics.DrawImage(source, Viewport, sourceArea, GraphicsUnit.Pixel);
-        return result;
+        try
+        {
+            var srcData = source.LockBits(new Rectangle(Point.Empty, source.Size), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                var dstData = result.LockBits(new Rectangle(Point.Empty, result.Size), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+                try
+                {
+                    byte* srcBase = (byte*)srcData.Scan0;
+                    byte* dstBase = (byte*)dstData.Scan0;
+                    int srcStride = srcData.Stride;
+                    int dstStride = dstData.Stride;
+
+                    int dstW = Cst.WINDOW_WIDTH;
+                    int dstH = Cst.WINDOW_HEIGHT;
+                    int vpX = Viewport.X;
+                    int vpY = Viewport.Y;
+                    int vpW = Viewport.Width;
+                    int vpH = Viewport.Height;
+                    int vpRight = vpX + vpW;
+                    int vpBottom = vpY + vpH;
+
+                    const uint opaqueBlack = 0xFF000000u;
+
+                    // Fill top & bottom borders with opaque black.
+                    for (int y = 0; y < vpY; y++)
+                    {
+                        new Span<uint>(dstBase + (long)y * dstStride, dstW).Fill(opaqueBlack);
+                    }
+                    for (int y = vpBottom; y < dstH; y++)
+                    {
+                        new Span<uint>(dstBase + (long)y * dstStride, dstW).Fill(opaqueBlack);
+                    }
+
+                    int srcX0 = sourceArea.X;
+                    int srcY0 = sourceArea.Y;
+                    int srcW = sourceArea.Width;
+                    int srcH = sourceArea.Height;
+                    int rightBorderW = dstW - vpRight;
+
+                    if (srcW == vpW && srcH == vpH)
+                    {
+                        long rowCopyBytes = (long)vpW * 4;
+                        for (int dy = 0; dy < vpH; dy++)
+                        {
+                            byte* dstRow = dstBase + (long)(vpY + dy) * dstStride;
+                            uint* dstRow32 = (uint*)dstRow;
+                            for (int bx = 0; bx < vpX; bx++) dstRow32[bx] = opaqueBlack;
+                            for (int bx = vpRight; bx < dstW; bx++) dstRow32[bx] = opaqueBlack;
+
+                            byte* srcRow = srcBase + (long)(srcY0 + dy) * srcStride + (long)srcX0 * 4;
+                            Buffer.MemoryCopy(srcRow, dstRow + (long)vpX * 4, rowCopyBytes, rowCopyBytes);
+                        }
+                    }
+                    else
+                    {
+                        // Matches GDI+ InterpolationMode.NearestNeighbor + PixelOffsetMode.Half:
+                        // center (dx + 0.5) maps to floor((dx + 0.5) * srcW / vpW).
+                        int* xMap = stackalloc int[vpW];
+                        long denomX = 2L * vpW;
+                        for (int dx = 0; dx < vpW; dx++)
+                        {
+                            int sx = (int)(((2L * dx + 1) * srcW) / denomX);
+                            if (sx >= srcW) sx = srcW - 1;
+                            xMap[dx] = srcX0 + sx;
+                        }
+
+                        long denomY = 2L * vpH;
+                        for (int dy = 0; dy < vpH; dy++)
+                        {
+                            int sy = (int)(((2L * dy + 1) * srcH) / denomY);
+                            if (sy >= srcH) sy = srcH - 1;
+
+                            uint* srcRow = (uint*)(srcBase + (long)(srcY0 + sy) * srcStride);
+                            uint* dstRow = (uint*)(dstBase + (long)(vpY + dy) * dstStride);
+                            for (int bx = 0; bx < vpX; bx++) dstRow[bx] = opaqueBlack;
+
+                            uint* dstVp = dstRow + vpX;
+                            for (int dx = 0; dx < vpW; dx++)
+                            {
+                                dstVp[dx] = srcRow[xMap[dx]];
+                            }
+
+                            for (int bx = 0; bx < rightBorderW; bx++) dstRow[vpRight + bx] = opaqueBlack;
+                        }
+                    }
+                }
+                finally
+                {
+                    result.UnlockBits(dstData);
+                }
+            }
+            finally
+            {
+                source.UnlockBits(srcData);
+            }
+            return result;
+        }
+        catch
+        {
+            result.Dispose();
+            throw;
+        }
     }
 }
 
@@ -84,43 +226,101 @@ public sealed class WindowTarget
     }
 }
 
-public sealed class WindowCapture(WindowTarget target, bool preferInner) : IGameCapture
+public sealed class WindowCapture : IGameCapture
 {
-    private bool useInner = preferInner;
+    public const int DefaultCaptureTimeoutMs = 2000;
+    public const int SlowCaptureWarningMs = 1000;
+
+    private readonly WindowTarget target;
+    private readonly int captureTimeoutMs;
+    private bool useInner;
     private Task<Bitmap>? pending;
     private readonly object pendingLock = new();
 
+    public bool HasPendingCapture
+    {
+        get { lock (pendingLock) return pending != null; }
+    }
+
+    public WindowCapture(WindowTarget target, bool preferInner, int captureTimeoutMs = DefaultCaptureTimeoutMs)
+    {
+        if (captureTimeoutMs <= 0) throw new ArgumentOutOfRangeException(nameof(captureTimeoutMs));
+        this.target = target;
+        this.useInner = preferInner;
+        this.captureTimeoutMs = captureTimeoutMs;
+    }
+
     public Bitmap Capture(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var dpi = new PhysicalPixels();
         target.Validate();
+        return ExecuteSingleFlightCapture(CaptureCore, captureTimeoutMs, cancellationToken, "PrintWindow");
+    }
+
+    internal Bitmap ExecuteSingleFlightCapture(Func<Bitmap> captureFunc, int timeoutMs, CancellationToken cancellationToken, string operationName)
+    {
         // PrintWindow is synchronous. Never accumulate workers if a driver stops replying.
         lock (pendingLock)
         {
             if (pending != null)
-                throw new AutomationException("Capture failed: previous PrintWindow is still running. Wait for LDPlayer to respond, then resume.");
+            {
+                throw new AutomationException(
+                    AutomationErrorKind.CaptureTimeout,
+                    $"Capture failed: previous {operationName} is still running. Wait for LDPlayer to respond, then resume.");
+            }
+            pending = Task.Run(captureFunc);
         }
-        var task = Task.Run(() => CaptureCore());
-        lock (pendingLock) pending = task;
+
+        Task<Bitmap> task;
+        lock (pendingLock) task = pending!;
+
+        var sw = Stopwatch.StartNew();
         try
         {
-            var result = task.WaitAsync(TimeSpan.FromSeconds(2), cancellationToken).GetAwaiter().GetResult();
-            lock (pendingLock) pending = null;
+            var result = task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), cancellationToken).GetAwaiter().GetResult();
+            lock (pendingLock)
+            {
+                if (ReferenceEquals(pending, task)) pending = null;
+            }
+            if (sw.ElapsedMilliseconds >= SlowCaptureWarningMs)
+                Log.W($"Slow capture: {operationName} took {sw.ElapsedMilliseconds} ms (limit={timeoutMs} ms).");
             return result;
         }
         catch (TimeoutException)
         {
-            DisposeLateResult(task);
-            throw new AutomationException("Capture failed: PrintWindow exceeded 2000 ms.");
+            DisposeLateResult(task, operationName, sw);
+            throw new AutomationException(
+                AutomationErrorKind.CaptureTimeout,
+                $"Capture failed: {operationName} exceeded {timeoutMs} ms (elapsed={sw.ElapsedMilliseconds} ms).");
         }
-        catch (OperationCanceledException) { DisposeLateResult(task); throw; }
-        catch { lock (pendingLock) pending = null; throw; }
+        catch (OperationCanceledException)
+        {
+            DisposeLateResult(task, operationName, sw);
+            throw;
+        }
+        catch
+        {
+            lock (pendingLock)
+            {
+                if (ReferenceEquals(pending, task)) pending = null;
+            }
+            throw;
+        }
     }
 
-    private void DisposeLateResult(Task<Bitmap> task) => _ = task.ContinueWith(t =>
+    private void DisposeLateResult(Task<Bitmap> task, string operationName, Stopwatch sw) => _ = task.ContinueWith(t =>
     {
-        if (t.Status == TaskStatus.RanToCompletion) t.Result.Dispose();
-        else _ = t.Exception;
+        if (t.Status == TaskStatus.RanToCompletion)
+        {
+            try { t.Result.Dispose(); } catch { }
+            Log.W($"Late {operationName} finished after {sw.ElapsedMilliseconds} ms; late bitmap disposed.");
+        }
+        else
+        {
+            _ = t.Exception;
+            Log.W($"Late {operationName} ended with status {t.Status} after {sw.ElapsedMilliseconds} ms.");
+        }
         lock (pendingLock)
             if (ReferenceEquals(pending, task)) pending = null;
     }, TaskScheduler.Default);
@@ -265,17 +465,34 @@ public sealed class FrameHealth
             throw new AutomationException("Stale frame: unchanged for 15s despite input; capture or game may be frozen.");
     }
 
-    public static bool IsBlank(Bitmap bitmap)
+    public static unsafe bool IsBlank(Bitmap bitmap)
     {
         if (!new Rectangle(Point.Empty, bitmap.Size).Contains(GameCoordinates.Viewport)) return true;
-        var first = bitmap.GetPixel(42, 53);
-        for (int y = 53; y < 820; y += 23)
-            for (int x = 42; x < 1449; x += 23)
+        var data = bitmap.LockBits(new Rectangle(Point.Empty, bitmap.Size), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        try
+        {
+            byte* scan0 = (byte*)data.Scan0;
+            int stride = data.Stride;
+            byte* first = scan0 + 53L * stride + 42 * 4;
+            int firstB = first[0];
+            int firstG = first[1];
+            int firstR = first[2];
+
+            for (int y = 53; y < 820; y += 23)
             {
-                var pixel = bitmap.GetPixel(x, y);
-                if (Math.Abs(pixel.R - first.R) > 3 || Math.Abs(pixel.G - first.G) > 3 || Math.Abs(pixel.B - first.B) > 3)
-                    return false;
+                byte* row = scan0 + (long)y * stride;
+                for (int x = 42; x < 1449; x += 23)
+                {
+                    byte* px = row + x * 4;
+                    if (Math.Abs(px[2] - firstR) > 3 || Math.Abs(px[1] - firstG) > 3 || Math.Abs(px[0] - firstB) > 3)
+                        return false;
+                }
             }
-        return true;
+            return true;
+        }
+        finally
+        {
+            bitmap.UnlockBits(data);
+        }
     }
 }

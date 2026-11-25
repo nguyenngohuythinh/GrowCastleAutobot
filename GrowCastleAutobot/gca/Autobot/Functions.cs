@@ -54,7 +54,7 @@ namespace gca
         private void OnWindowFreezeDetected()
         {
             if (backgroundMode)
-                throw new AutomationException("Stale frame: freeze monitor detected identical images. No reset was issued.");
+                throw new AutomationException(AutomationErrorKind.StaleFrame, "Stale frame: freeze monitor detected identical images. No reset was issued.");
 
             if (screenshotOnFreezing)
             {
@@ -62,11 +62,10 @@ namespace gca
             }
 
             Log.F($"Freeze detected. Will reset");
-            Thread.Sleep(100);
+            Wait(100);
             Reset();
 
-            restartRequested = true;
-            Halt();
+            Halt(allowAutoRestart: true);
         }
 
         /// <summary>
@@ -74,18 +73,27 @@ namespace gca
         /// </summary>
         private void G(bool saveScreen = false) => Getscreen(saveScreen);
 
+        private void ReplaceCurrentScreen(Bitmap next)
+        {
+            var previous = currentScreen;
+            currentScreen = next;
+            if (previous != null && !ReferenceEquals(previous, next))
+            {
+                previous.Dispose();
+            }
+        }
+
         private void Getscreen(bool saveScreen = false)
         {
+            if (IsActive) C();
             CheckWindowState();
             if (backgroundMode)
             {
-                var next = CaptureBackground();
-                currentScreen?.Dispose();
-                currentScreen = next;
+                ReplaceCurrentScreen(CaptureBackground());
             }
             else
             {
-                currentScreen = CaptureScreen();
+                currentScreen = CaptureForegroundWithRetry();
             }
             screenshotCache.AddScreenshot(currentScreen, saveScreen);
             if (screenshotPopups && DateTime.Now - lastPopupScreenshot > popupScreenshotInterval && IsPopupOnCurrentScreen())
@@ -93,6 +101,46 @@ namespace gca
                 Log.P("Popup detected. Will screenshot");
                 Screenshot(currentScreen, Cst.SCREENSHOT_POPUPS_PATH);
                 lastPopupScreenshot = DateTime.Now;
+            }
+        }
+
+        private Bitmap CaptureForegroundWithRetry()
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                var token = GetIoToken();
+                token.ThrowIfCancellationRequested();
+                if (IsActive) C();
+
+                captureRetryTracker.RecordAttempt();
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    var frame = CaptureScreen();
+                    sw.Stop();
+                    captureRetryTracker.RecordSuccess();
+                    Interlocked.Exchange(ref lastCaptureElapsedMs, sw.ElapsedMilliseconds);
+                    PublishRuntimeStatus(force: attempt > 1);
+                    return frame;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    var wrapped = ex as AutomationException
+                        ?? new AutomationException(AutomationErrorKind.CaptureFailed, $"Capture failed: desktop CopyFromScreen error: {ex.Message}");
+                    bool willRetry = captureRetryPolicy.ShouldRetry(wrapped, attempt);
+                    captureRetryTracker.RecordFailure(wrapped, willRetry);
+
+                    if (!willRetry)
+                    {
+                        Log.E($"{wrapped.Message} Foreground capture retries exhausted after {attempt} attempt(s).");
+                        throw wrapped;
+                    }
+
+                    int delayMs = captureRetryPolicy.GetDelayMs(attempt);
+                    Log.W($"{wrapped.Message} Foreground capture recovery {attempt}/{captureRetryPolicy.MaxRetries} (delay={delayMs}ms).");
+                    WaitRetryDelay(delayMs, token);
+                }
             }
         }
 
@@ -132,21 +180,36 @@ namespace gca
 
         public Bitmap CaptureScreen()
         {
-            Bitmap bmp = null!;
+            Bitmap bmp;
+            bool createdNew = false;
 
             if (currentScreen == null || currentScreen.Width != DisplayInfo.Width || currentScreen.Height != DisplayInfo.Height)
             {
                 bmp = new Bitmap(DisplayInfo.Width, DisplayInfo.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                createdNew = true;
             }
             else
             {
                 bmp = currentScreen;
             }
-            using (Graphics g = Graphics.FromImage(bmp))
+
+            try
             {
-                g.CopyFromScreen(DisplayInfo.X, DisplayInfo.Y, 0, 0, bmp.Size, CopyPixelOperation.SourceCopy);
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.CopyFromScreen(DisplayInfo.X, DisplayInfo.Y, 0, 0, bmp.Size, CopyPixelOperation.SourceCopy);
+                }
+                if (createdNew && currentScreen != null && !ReferenceEquals(currentScreen, bmp))
+                {
+                    currentScreen.Dispose();
+                }
+                return bmp;
             }
-            return bmp;
+            catch
+            {
+                if (createdNew) bmp.Dispose();
+                throw;
+            }
         }
 
         private nint WndFind(string windowName)

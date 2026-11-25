@@ -103,6 +103,11 @@ namespace gca
         {
             if (backgroundMode)
             {
+                if (useAdb && gameInput is Classes.Automation.AdbInput adbInput)
+                {
+                    BackgroundAction(_ => adbInput.PressAndroidButton(buttonName));
+                    return;
+                }
                 C();
                 if (DateTime.UtcNow - lastValidCapture > TimeSpan.FromMilliseconds(500)) G();
                 backgroundTarget!.Validate();

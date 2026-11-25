@@ -68,6 +68,7 @@ namespace gca
             autobot.OnShowBalloon += ShowBalloon;
 
             autobot.OnRunningTimeUpdate += OnRunningTimeUIUpdate;
+            autobot.OnRuntimeStatusUpdate += OnRuntimeStatusUIUpdate;
 
             autobot.OnFailed += ShowFailed;
 
@@ -168,6 +169,7 @@ namespace gca
             };
 
             SetTooltips();
+            UpdateConfiguredModeStatusText();
 
             Log.U($"App started. App version: {version}");
 
@@ -488,11 +490,70 @@ namespace gca
             autobot.Stop();
         }
 
+        private void UpdateConfiguredModeStatusText()
+        {
+            if (BackgroundModeStatusText == null) return;
+            if (autobot != null && autobot.IsActive)
+            {
+                BackgroundModeStatusText.Text = autobot.GetRuntimeStatusSnapshot().FormatSummary();
+                return;
+            }
+
+            bool bg = BackgroundModeCheckbox.IsChecked == true;
+            bool adb = bg && UseAdbCheckbox.IsChecked == true;
+            if (adb)
+            {
+                BackgroundModeStatusText.Text = "Mode: Background ADB (supports minimize / Boss Key hide LDPlayer)";
+            }
+            else if (bg)
+            {
+                string inner = CaptureInnerWindowCheckbox.IsChecked == true ? "inner render" : "outer + inner fallback";
+                BackgroundModeStatusText.Text = $"Mode: Background Win32 ({inner}; keep LDPlayer unminimized)";
+            }
+            else
+            {
+                BackgroundModeStatusText.Text = "Mode: Foreground (uses physical cursor & window focus)";
+            }
+        }
+
+        private void UpdateWindowAndTrayStatus(string statusText)
+        {
+            string title = string.IsNullOrWhiteSpace(statusText) ? Cst.APP_TITLE : $"{Cst.APP_TITLE} — {statusText}";
+            this.Title = title;
+            if (trayIcon != null)
+            {
+#if DEBUG
+                string prefix = "GCA DEBUG";
+#else
+                string prefix = "GCA";
+#endif
+                string trayText = string.IsNullOrWhiteSpace(statusText) ? prefix : $"{prefix} - {statusText}";
+                trayIcon.Text = trayText.Length <= 63 ? trayText : trayText[..63];
+            }
+        }
+
+        private void OnRuntimeStatusUIUpdate(gca.Classes.Automation.RuntimeStatusSnapshot snapshot)
+        {
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+                return;
+
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (BackgroundModeStatusText != null)
+                {
+                    BackgroundModeStatusText.Text = snapshot.FormatSummary();
+                }
+            });
+        }
+
         private void OnRunningTimeUIUpdate(TimeSpan time)
         {
-            Dispatcher.Invoke(() =>
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+                return;
+
+            Dispatcher.BeginInvoke(() =>
             {
-                if(time.Days > 0)
+                if (time.Days > 0)
                 {
                     TimeRunningLabel.Content = $"{time.Days}.{time.ToString(Cst.TIMESPAN_FORMAT)}";
                     return;
@@ -512,6 +573,9 @@ namespace gca
                 ThreadStatusLabel.Content = $"Running";
                 ThreadStatusShortcutLabel.Content = $"To stop: {StopClickerShortcutBox.Text}";
                 ThreadStatusLabel.Foreground = System.Windows.Media.Brushes.Green;
+                var snap = autobot.GetRuntimeStatusSnapshot();
+                BackgroundModeStatusText.Text = snap.FormatSummary();
+                UpdateWindowAndTrayStatus($"Running [{snap.FormatShortBadge()}]");
                 SetCanvasChildrenState(TestCanvas, false);
                 SetCanvasChildrenState(OnlineActionsTestCanvas, false);
 
@@ -546,6 +610,7 @@ namespace gca
                 ThreadStatusLabel.Content = $"Stop requested";
                 ThreadStatusShortcutLabel.Content = string.Empty;
                 ThreadStatusLabel.Foreground = System.Windows.Media.Brushes.Red;
+                UpdateWindowAndTrayStatus("Stopping...");
                 SetBackground(Cst.StopRequestedBackground, false);
             });
         }
@@ -560,6 +625,8 @@ namespace gca
                 ThreadStatusLabel.Content = $"Stopped";
                 ThreadStatusShortcutLabel.Content = $"To start: {StartClickerShortcutBox.Text}";
                 ThreadStatusLabel.Foreground = System.Windows.Media.Brushes.Black;
+                UpdateConfiguredModeStatusText();
+                UpdateWindowAndTrayStatus("");
                 ABTimerLabel.Content = string.Empty;
                 NextCleanupTimeLabel.Content = string.Empty;
                 NextRestartTimeLabel.Content = string.Empty;
@@ -590,6 +657,7 @@ namespace gca
             StopButton.IsEnabled = true;
             StartButton.IsEnabled = false;
             ThreadStatusLabel.Foreground = System.Windows.Media.Brushes.Red;
+            UpdateWindowAndTrayStatus("Pausing...");
 
             SetBackground(Cst.PauseRequestedBackground, false);
         }
@@ -600,10 +668,13 @@ namespace gca
             {
                 ((System.Windows.Controls.Image)StartButton.Content).Source = new BitmapImage(new Uri("Images/Continue.png", UriKind.Relative));
                 ThreadStatusLabel.Content = $"Paused";
-                ThreadStatusShortcutLabel.Content = string.Empty;
+                ThreadStatusShortcutLabel.Content = $"Resume or Stop ({StopClickerShortcutBox.Text})";
                 StopButton.IsEnabled = true;
                 StartButton.IsEnabled = true;
                 ThreadStatusLabel.Foreground = System.Windows.Media.Brushes.Orange;
+                var snap = autobot.GetRuntimeStatusSnapshot();
+                BackgroundModeStatusText.Text = snap.FormatSummary();
+                UpdateWindowAndTrayStatus($"Paused [{snap.FormatShortBadge()}]");
 
                 SetBackground(Cst.PausedBackground, false);
             });
@@ -612,7 +683,7 @@ namespace gca
 
         private void OnClosed(object? sender, EventArgs e)
         {
-            autobot.OnStopHotkey();
+            autobot.StopAndWait(TimeSpan.FromMilliseconds(1500));
             hotkeyManager.Close();
             Settings.Default.WindowTop = this.Top;
             Settings.Default.WindowLeft = this.Left;
@@ -1196,6 +1267,7 @@ namespace gca
 
             s.BackgroundMode = BackgroundModeCheckbox.IsChecked == true;
             s.CaptureInnerWindow = CaptureInnerWindowCheckbox.IsChecked == true;
+            s.UseAdb = UseAdbCheckbox.IsChecked == true;
 
             s.SimulateMouseMovement = SimulateMouseMovementCheckbox.IsChecked == true;
             s.SimulateKeyBindingOnDungeonEnter = SimulateKeyBindingOnDungeonEnterCheckbox.IsChecked == true;
@@ -1435,6 +1507,7 @@ namespace gca
 
             BackgroundModeCheckbox.IsChecked = s.BackgroundMode;
             CaptureInnerWindowCheckbox.IsChecked = s.CaptureInnerWindow;
+            UseAdbCheckbox.IsChecked = s.UseAdb;
 
             SimulateMouseMovementCheckbox.IsChecked = s.SimulateMouseMovement;
             SimulateKeyBindingOnDungeonEnterCheckbox.IsChecked = s.SimulateKeyBindingOnDungeonEnter;
