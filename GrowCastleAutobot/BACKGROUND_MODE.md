@@ -4,7 +4,12 @@ Enable **Background mode** and **Capture inner window** in Settings. Both option
 are visible at the minimum GCA width and persist in `clickerSettings.json`.
 Select the exact LDPlayer instance title (for example `LDPlayer-1`). Keep Android
 at **1600 × 900**, DPI 240. Leave the emulator open; another app may cover it.
-Minimizing is deliberately unsupported: the bot pauses without restoring it.
+Minimizing is deliberately unsupported in Win32 mode: the bot pauses without restoring it.
+
+To allow **minimizing or hiding LDPlayer (Boss Key `Ctrl+Q`)** while the bot keeps
+running without moving the cursor, also enable **Use ADB (allow minimize/hide LD)**
+in Settings, and turn on **ADB debugging → Local connection** inside LDPlayer
+Settings → Other settings (restart LDPlayer once after enabling ADB).
 
 ## Implementation and verified causes
 
