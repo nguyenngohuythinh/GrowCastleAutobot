@@ -83,7 +83,7 @@ namespace gca
 
                     G();
 
-                    currentScreen = Colormode(5, currentScreen);
+                    ReplaceCurrentScreen(Colormode(5, currentScreen));
 
                     if (P(744, 447) == Col(95, 223, 255))
                     {

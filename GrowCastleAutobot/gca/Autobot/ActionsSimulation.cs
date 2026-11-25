@@ -14,6 +14,7 @@ namespace gca
         /// <param name="y"></param>
         public void LeftClick(int x, int y)
         {
+            RequireForegroundInput();
             x += DisplayInfo.X;
             y += DisplayInfo.Y;
             WinAPI.SetCursorPos(x, y);
@@ -28,6 +29,7 @@ namespace gca
         /// <param name="y"></param>
         public void RightClick(int x, int y)
         {
+            RequireForegroundInput();
             x += DisplayInfo.X;
             y += DisplayInfo.Y;
             WinAPI.SetCursorPos(x, y);
@@ -37,22 +39,12 @@ namespace gca
 
         public void LeftClickBackground(IntPtr hWnd, int x, int y)
         {
-            x += Cst.LD_X_SHIFT;
-            y += Cst.LD_Y_SHIFT;
-
-            IntPtr lParam = MakeLParam(x, y);
-            WinAPI.SendMessage(hWnd, WinAPI.WM_LBUTTONDOWN, (IntPtr)1, lParam);
-            WinAPI.SendMessage(hWnd, WinAPI.WM_LBUTTONUP, (IntPtr)0, lParam);
+            BackgroundAction(input => input.Click(x, y));
         }
 
         public void RightClickBackground(IntPtr hWnd, int x, int y)
         {
-            x += Cst.LD_X_SHIFT;
-            y += Cst.LD_Y_SHIFT;
-
-            IntPtr lParam = MakeLParam(x, y);
-            WinAPI.SendMessage(hWnd, WinAPI.WM_RBUTTONDOWN, (IntPtr)2, lParam);
-            WinAPI.SendMessage(hWnd, WinAPI.WM_RBUTTONUP, (IntPtr)0, lParam);
+            BackgroundAction(input => input.Click(x, y, right: true));
         }
 
         /// <summary>
@@ -61,6 +53,7 @@ namespace gca
         /// <param name="amount"></param>
         public void ScrollWheel(int amount)
         {
+            RequireForegroundInput();
             WinAPI.mouse_event(WinAPI.MOUSEEVENTF_WHEEL, 0, 0, (uint)amount, UIntPtr.Zero);
         }
 
@@ -73,21 +66,12 @@ namespace gca
         /// <param name="delta"></param>
         public void WheelBackground(IntPtr hWnd, int x, int y, int delta)
         {
-            x += Cst.LD_X_SHIFT;
-            y += Cst.LD_Y_SHIFT;
-
-            IntPtr lParam = MakeLParam(x, y);
-            IntPtr wParam = MakeWParam(0, delta);
-            WinAPI.SendMessage(hWnd, WinAPI.WM_MOUSEWHEEL, wParam, lParam);
+            BackgroundAction(input => input.Wheel(x, y, delta));
         }
 
         public void MoveBackground(IntPtr hWnd, int x, int y)
         {
-            x += Cst.LD_X_SHIFT;
-            y += Cst.LD_Y_SHIFT;
-
-            IntPtr lParam = MakeLParam(x, y);
-            WinAPI.SendMessage(hWnd, WinAPI.WM_MOUSEMOVE, IntPtr.Zero, lParam);
+            BackgroundAction(input => input.Move(x, y));
         }
 
         public IntPtr MakeLParam(int x, int y)
@@ -99,48 +83,10 @@ namespace gca
 
         private void SendKey(byte keyCode)
         {
+            if (backgroundMode) { BackgroundAction(input => input.Key(keyCode)); return; }
             WinAPI.keybd_event(keyCode, 0, WinAPI.KEYEVENTF_KEYDOWN, UIntPtr.Zero);
             Thread.Sleep(50);
             WinAPI.keybd_event(keyCode, 0, WinAPI.KEYEVENTF_KEYUP, UIntPtr.Zero);
-        }
-
-        private Bitmap CaptureWindowByTitle(string windowTitle)
-        {
-            IntPtr hWnd = WinAPI.FindWindow(null!, windowTitle);
-            if (hWnd == IntPtr.Zero)
-            {
-                throw new Exception("Window not found");
-            }
-
-            WinAPI.GetWindowRect(hWnd, out WinAPI.RECT rect);
-            int width = rect.Right - rect.Left;
-            int height = rect.Bottom - rect.Top;
-
-            Bitmap bmp = null!;
-
-            if (currentScreen == null || currentScreen.Width != width || currentScreen.Height != height)
-            {
-                bmp = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            }
-            else
-            {
-                bmp = currentScreen;
-            }
-
-            using (Graphics gfxBmp = Graphics.FromImage(bmp))
-            {
-                IntPtr hdcBitmap = gfxBmp.GetHdc();
-                bool succeeded = WinAPI.PrintWindow(hWnd, hdcBitmap, 0);
-                gfxBmp.ReleaseHdc(hdcBitmap);
-
-                if (!succeeded)
-                {
-                    bmp.Dispose();
-                    throw new Exception("PrintWindow failed");
-                }
-            }
-
-            return bmp;
         }
 
         public void ClickHomeButton()
@@ -155,22 +101,20 @@ namespace gca
 
         public void ClickButton(string buttonName)
         {
-            ProcessStartInfo psi = new ProcessStartInfo
+            if (backgroundMode)
             {
-                FileName = ldConsolePath,
-                Arguments = $"action --name \"{windowName}\" --key call.keyboard --value {buttonName}",
-
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-
-            using Process process = new Process
-            {
-                StartInfo = psi
-            };
-
-            process.Start();
-            process.WaitForExit();
+                if (useAdb && gameInput is Classes.Automation.AdbInput adbInput)
+                {
+                    BackgroundAction(_ => adbInput.PressAndroidButton(buttonName));
+                    return;
+                }
+                C();
+                if (DateTime.UtcNow - lastValidCapture > TimeSpan.FromMilliseconds(500)) G();
+                backgroundTarget!.Validate();
+                RunLdConsole("action", "--index", ldInstanceIndex.ToString(), "--key", "call.keyboard", "--value", buttonName);
+                frameHealth.InputSent(frameClock.Elapsed);
+            }
+            else RunLdConsole("action", "--name", windowName, "--key", "call.keyboard", "--value", buttonName);
         }
 
     }

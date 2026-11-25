@@ -247,6 +247,8 @@ ASALocalRun/
 
 .mfractor/
 /.dotnet
+/.dotnet-install.ps1
+/artifacts/
 /.packages
 /.tools/vswhere/2.5.2
 /.tools/native/iltools

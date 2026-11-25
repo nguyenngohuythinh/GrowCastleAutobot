@@ -84,6 +84,7 @@
 
         public bool BackgroundMode { get; set; } = true;
         public bool CaptureInnerWindow { get; set; }
+        public bool UseAdb { get; set; }
 
         public bool SimulateMouseMovement { get; set; }
         public bool SimulateKeyBindingOnDungeonEnter { get; set; }

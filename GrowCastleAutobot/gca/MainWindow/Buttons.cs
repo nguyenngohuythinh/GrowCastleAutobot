@@ -623,21 +623,41 @@ namespace gca
 
         private void BackgroundModeCheckbox_Checked(object sender, RoutedEventArgs e)
         {
+            UpdateConfiguredModeStatusText();
             RewriteCurrentSettings(sender);
         }
 
         private void BackgroundModeCheckbox_Unchecked(object sender, RoutedEventArgs e)
         {
+            UpdateConfiguredModeStatusText();
             RewriteCurrentSettings(sender);
         }
 
         private void CaptureInnerWindowCheckbox_Checked(object sender, RoutedEventArgs e)
         {
+            UpdateConfiguredModeStatusText();
             RewriteCurrentSettings(sender);
         }
 
         private void CaptureInnerWindowCheckbox_Unchecked(object sender, RoutedEventArgs e)
         {
+            UpdateConfiguredModeStatusText();
+            RewriteCurrentSettings(sender);
+        }
+
+        private void UseAdbCheckbox_Checked(object sender, RoutedEventArgs e)
+        {
+            if (BackgroundModeCheckbox.IsChecked != true)
+            {
+                BackgroundModeCheckbox.IsChecked = true;
+            }
+            UpdateConfiguredModeStatusText();
+            RewriteCurrentSettings(sender);
+        }
+
+        private void UseAdbCheckbox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            UpdateConfiguredModeStatusText();
             RewriteCurrentSettings(sender);
         }
 

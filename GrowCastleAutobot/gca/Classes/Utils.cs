@@ -325,51 +325,56 @@ namespace gca.Classes
         /// <returns></returns>
         public static byte[] BmpHash(Bitmap bitmap)
         {
-            using (var md5 = MD5.Create())
+            BitmapData? data = null;
+            byte[]? rowBuffer = null;
+            try
             {
-                BitmapData data = null!;
-                try
+                data = bitmap.LockBits(
+                    new Rectangle(System.Drawing.Point.Empty, bitmap.Size),
+                    ImageLockMode.ReadOnly,
+                    PixelFormat.Format32bppArgb
+                );
+
+                int width = bitmap.Width;
+                int height = bitmap.Height;
+                int stride = data.Stride;
+                int maxRowBytes = ((width + 2) / 3) * 4;
+                rowBuffer = System.Buffers.ArrayPool<byte>.Shared.Rent(Math.Max(4, maxRowBytes));
+
+                using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
+                unsafe
                 {
-                    data = bitmap.LockBits(
-                        new Rectangle(System.Drawing.Point.Empty, bitmap.Size),
-                        ImageLockMode.ReadOnly,
-                        PixelFormat.Format32bppArgb
-                    );
-
-                    int width = bitmap.Width;
-                    int height = bitmap.Height;
-                    int stride = data.Stride;
-
-                    List<byte> includedPixels = new(width * height * 4);
-
-                    unsafe
+                    byte* ptr = (byte*)data.Scan0;
+                    fixed (byte* dstBase = rowBuffer)
                     {
-                        byte* ptr = (byte*)data.Scan0;
                         for (int y = 0; y < height; y += 3)
                         {
-                            for (int x = 0; x < width; x += 3)
+                            byte* row = ptr + (long)y * stride;
+                            int outOffset = 0;
+                            int startX = y < 75 ? 75 : 0;
+                            for (int x = startX; x < width; x += 3)
                             {
-                                if (x < 75 && y < 75)
-                                {
-                                    continue;
-                                }
-
-                                int index = y * stride + x * 4;
-                                includedPixels.Add(ptr[index]);
-                                includedPixels.Add(ptr[index + 1]);
-                                includedPixels.Add(ptr[index + 2]);
-                                includedPixels.Add(ptr[index + 3]);
+                                *(int*)(dstBase + outOffset) = *(int*)(row + x * 4);
+                                outOffset += 4;
+                            }
+                            if (outOffset > 0)
+                            {
+                                hasher.AppendData(rowBuffer, 0, outOffset);
                             }
                         }
                     }
-                    return md5.ComputeHash(includedPixels.ToArray());
                 }
-                finally
+                return hasher.GetHashAndReset();
+            }
+            finally
+            {
+                if (rowBuffer != null)
                 {
-                    if (data != null)
-                    {
-                        bitmap.UnlockBits(data);
-                    }
+                    System.Buffers.ArrayPool<byte>.Shared.Return(rowBuffer);
+                }
+                if (data != null)
+                {
+                    bitmap.UnlockBits(data);
                 }
             }
         }

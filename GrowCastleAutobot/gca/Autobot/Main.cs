@@ -1,5 +1,6 @@
 ﻿using gca.Classes;
 using gca.Classes.Exceptions;
+using gca.Classes.Automation;
 using gca.Script;
 using gca.Enums;
 using gca.Structs;
@@ -23,236 +24,283 @@ namespace gca
 
         private void WorkerLoop()
         {
-
+            bool shouldAutoRestart = false;
             try
             {
-                G();
-
-                if (testMode != TestMode.None)
-                {
-                    PerformTestMode(testMode);
-                    Halt();
-                }
-
-                if (notificationOnlyMode)
-                {
-                    Log.I("Notification only mode is enabled");
-
-                    bool currentCountMode = false;
-
-                    Loop30Detector loopDetector = log30DetectionsInNotificationMode ? new() : null!;
-
-                    while (true)
-                    {
-                        bool notificationReady = notifyOn30Crystals && DateTime.Now - last30CrystalsNotificationTime > notifyOn30CrystalsInterval;
-                        bool audioCheckReady = playAudioOn30Crystals && DateTime.Now - last30CrystalsAudioPlayTime > playAudioOn30CrystalsInterval;
-
-                        currentCountMode = !currentCountMode;
-
-                        int crystalsCount = CountCrystals(currentCountMode, out _);
-
-                        if (log30DetectionsInNotificationMode && loopDetector.Process(crystalsCount))
-                        {
-                            CrystalsCollectionTimeLogger.AddTimeStampWithDiff(Cst.CRYSTALS_COLLECTED_TIME_FILE_PATH);
-                        }
-
-                        if ((notificationReady || audioCheckReady) && crystalsCount >= 30)
-                        {
-                            if (notificationReady)
-                            {
-                                ShowBalloon("", "30 crystals collected");
-                                last30CrystalsNotificationTime = DateTime.Now;
-                            }
-                            if (audioCheckReady)
-                            {
-                                string file = audio30crystalsIndex == 0 ? Cst.AUDIO_30_CRYSTALS_1_PATH : Cst.AUDIO_30_CRYSTALS_2_PATH;
-                                OnPlayAudio?.Invoke(file, audio30crystalsIndex == 0 ? playAudio1On30CrystalsVolume : playAudio2On30CrystalsVolume);
-                                last30CrystalsAudioPlayTime = DateTime.Now;
-                            }
-                        }
-                        Wait(500);
-                    }
-                }
-
-                int prevFrameStatus = 0;
                 while (true)
                 {
-                    if (CaptchaOnScreen())
+                    try
                     {
-                        if (solveCaptcha)
-                        {
-                            SolveCaptcha(CAPTCHA_TEST_MODE);
-                        }
-                        else
-                        {
-                            StopScript();
-                        }
                         G();
-                    }
 
-                    if (CheckSky(false))
-                    {
-
-                        if (CheckGCMenu(false))
+                        if (testMode != TestMode.None)
                         {
-                            Log.I("Gc menu detected");
+                            PerformTestMode(testMode);
+                            Halt();
+                        }
 
-                            if (CheckEmptyGame(false))
+                        if (notificationOnlyMode)
+                        {
+                            Log.I("Notification only mode is enabled");
+
+                            bool currentCountMode = false;
+
+                            Loop30Detector loopDetector = log30DetectionsInNotificationMode ? new() : null!;
+
+                            while (true)
                             {
+                                bool notificationReady = notifyOn30Crystals && DateTime.Now - last30CrystalsNotificationTime > notifyOn30CrystalsInterval;
+                                bool audioCheckReady = playAudioOn30Crystals && DateTime.Now - last30CrystalsAudioPlayTime > playAudioOn30CrystalsInterval;
+
+                                currentCountMode = !currentCountMode;
+
+                                int crystalsCount = CountCrystals(currentCountMode, out _);
+
+                                if (log30DetectionsInNotificationMode && loopDetector.Process(crystalsCount))
+                                {
+                                    CrystalsCollectionTimeLogger.AddTimeStampWithDiff(Cst.CRYSTALS_COLLECTED_TIME_FILE_PATH);
+                                }
+
+                                if ((notificationReady || audioCheckReady) && crystalsCount >= 30)
+                                {
+                                    if (notificationReady)
+                                    {
+                                        ShowBalloon("", "30 crystals collected");
+                                        last30CrystalsNotificationTime = DateTime.Now;
+                                    }
+                                    if (audioCheckReady)
+                                    {
+                                        string file = audio30crystalsIndex == 0 ? Cst.AUDIO_30_CRYSTALS_1_PATH : Cst.AUDIO_30_CRYSTALS_2_PATH;
+                                        OnPlayAudio?.Invoke(file, audio30crystalsIndex == 0 ? playAudio1On30CrystalsVolume : playAudio2On30CrystalsVolume);
+                                        last30CrystalsAudioPlayTime = DateTime.Now;
+                                    }
+                                }
                                 Wait(500);
-                                if (CheckEmptyGame())
+                            }
+                        }
+
+                        int prevFrameStatus = 0;
+                        while (true)
+                        {
+                            C();
+                            if (CaptchaOnScreen())
+                            {
+                                if (solveCaptcha)
                                 {
-                                    Log.F("Empty game detected. Halt");
-                                    if (saveScreenshotsOnError)
+                                    SolveCaptcha(CAPTCHA_TEST_MODE);
+                                }
+                                else
+                                {
+                                    StopScript();
+                                }
+                                G();
+                            }
+
+                            if (CheckSky(false))
+                            {
+
+                                if (CheckGCMenu(false))
+                                {
+                                    Log.I("Gc menu detected");
+
+                                    if (prevFrameStatus == 1)
                                     {
-                                        screenshotCache.SaveAllToFolder(Cst.SCREENSHOT_ERROR_SCREEN_CACHE_PATH);
+                                        restartGuard.RecordHealthyProgress();
+                                        RecordCompletedBattle();
                                     }
-                                    Halt();
-                                }
-                            }
 
-                            if (nextCleanupTime < DateTime.Now)
-                            {
-
-                                try
-                                {
-                                    if (doSaveBeforeCleanup)
+                                    if (CheckEmptyGame(false))
                                     {
-                                        DoSave();
+                                        Wait(500);
+                                        if (CheckEmptyGame())
+                                        {
+                                            Log.F("Empty game detected. Halt");
+                                            if (saveScreenshotsOnError)
+                                            {
+                                                screenshotCache.SaveAllToFolder(Cst.SCREENSHOT_ERROR_SCREEN_CACHE_PATH);
+                                            }
+                                            Halt();
+                                        }
                                     }
-                                }
-                                catch (OnlineActionsException e)
-                                {
-                                    Log.E($"Error happened while doing save before cleanup: {e.Info}");
-                                }
 
-                                MakeCleanup();
-                                continue;
-                            }
-                            else if (doRestarts && DateTime.Now > nextRestartDt)
-                            {
-                                Log.I("Restart time's up. Do restart");
-                                Wait(300);
-                                Restart();
-                                Log.I("Restart made");
-                                Wait(200);
-                                continue;
-                            }
-                            else
-                            {
-                                if (prevFrameStatus == 1 && dungeonFarm && dungeonToFarm.IsDungeon())
-                                {
-                                    ShowBattleLength();
-                                }
-                                CheckAdForX3();
-                                WaitForAdAndWatch();
-                                TryUpgradeHero();
-                                TryUpgradeTower();
-
-                                foreach (var rt in waitBetweenBattlesRuntimes)
-                                {
-                                    rt.Suspend();
-                                }
-
-                                if(!ignoreWaitsBetweenBattlesOnX3FromAd || DateTime.Now - x3Timer > TimeSpan.FromSeconds(1205))
-                                {
-                                    DoActionsBeforeReplay();
-                                }
-
-                                foreach (var rt in waitBetweenBattlesRuntimes)
-                                {
-                                    if (!rt.IsActive && !rt.IsElapsed)
+                                    if (nextCleanupTime < DateTime.Now)
                                     {
-                                        rt.Start();
+
+                                        try
+                                        {
+                                            if (doSaveBeforeCleanup)
+                                            {
+                                                DoSave();
+                                            }
+                                        }
+                                        catch (OnlineActionsException e)
+                                        {
+                                            Log.E($"Error happened while doing save before cleanup: {e.Info}");
+                                        }
+
+                                        MakeCleanup();
+                                        continue;
+                                    }
+                                    else if (doRestarts && DateTime.Now > nextRestartDt)
+                                    {
+                                        Log.I("Restart time's up. Do restart");
+                                        Wait(300);
+                                        Restart();
+                                        Log.I("Restart made");
+                                        Wait(200);
+                                        continue;
                                     }
                                     else
                                     {
-                                        rt.Resume();
+                                        if (prevFrameStatus == 1 && dungeonFarm && dungeonToFarm.IsDungeon())
+                                        {
+                                            ShowBattleLength();
+                                        }
+                                        CheckAdForX3();
+                                        WaitForAdAndWatch();
+                                        TryUpgradeHero();
+                                        TryUpgradeTower();
+
+                                        foreach (var rt in waitBetweenBattlesRuntimes)
+                                        {
+                                            rt.Suspend();
+                                        }
+
+                                        if (!ignoreWaitsBetweenBattlesOnX3FromAd || DateTime.Now - x3Timer > TimeSpan.FromSeconds(1205))
+                                        {
+                                            DoActionsBeforeReplay();
+                                        }
+
+                                        foreach (var rt in waitBetweenBattlesRuntimes)
+                                        {
+                                            if (!rt.IsActive && !rt.IsElapsed)
+                                            {
+                                                rt.Start();
+                                            }
+                                            else
+                                            {
+                                                rt.Resume();
+                                            }
+                                        }
+                                        Log.I("Check ended");
+                                        OnChangeBackground?.Invoke(Cst.RunningBackground);
+
+                                        Replay();
+
+                                        prevFrameStatus = 2;
                                     }
                                 }
-                                Log.I($"Check ended");
-                                OnChangeBackground?.Invoke(Cst.RunningBackground);
+                                else
+                                {
 
-                                Replay();
+                                    if (IsInTown(false))
+                                    {
+                                        SwitchTown();
+                                        prevFrameStatus = 0;
+                                        continue;
+                                    }
 
-                                prevFrameStatus = 2;
-                            }
-                        }
-                        else
-                        {
-
-                            if (IsInTown(false))
-                            {
-                                SwitchTown();
-                                prevFrameStatus = 0;
-                                continue;
-                            }
-
-                            if (dungeonFarm)
-                            {
-                                ActivateHeroesDun();
+                                    if (dungeonFarm)
+                                    {
+                                        ActivateHeroesDun();
+                                    }
+                                    else
+                                    {
+                                        ActivateHeroes();
+                                    }
+                                    prevFrameStatus = 1;
+                                }
                             }
                             else
                             {
-                                ActivateHeroes();
+
+                                Log.I("Sky not clear. wait 4s");
+
+                                bool quitWaiting = false;
+                                if (WaitUntil(() => CheckSky() || quitWaiting, () =>
+                                {
+                                    quitWaiting = CloseOverlap();
+                                }, 4000, 100))
+                                {
+                                    if (!quitWaiting)
+                                    {
+                                        Log.I("sky cleared. continue");
+                                    }
+                                }
+                                else if (!CheckSky())
+                                {
+                                    Log.W("4s waited");
+                                    EscClickStart();
+                                }
+
+                                prevFrameStatus = 0;
+
                             }
-                            prevFrameStatus = 1;
                         }
                     }
-                    else
+                    catch (AutomationException e)
                     {
-
-                        Log.I("Sky not clear. wait 4s");
-
-                        bool quitWaiting = false;
-                        if (WaitUntil(() => CheckSky() || quitWaiting, () =>
+                        try
                         {
-                            quitWaiting = CloseOverlap();
-                        }, 4000, 100))
-                        {
-                            if (!quitWaiting)
-                            {
-                                Log.I("sky cleared. continue");
-                            }
+                            PauseAutomation(e);
+                            continue;
                         }
-                        else if (!CheckSky())
+                        catch (OperationCanceledException)
                         {
-                            Log.W("4s waited");
-                            EscClickStart();
+                            Log.U($"Stop clicker thread (from paused fault). Time running: {RunningTime:hh\\:mm\\:ss\\.fff}");
+                            OnStopped?.Invoke();
                         }
-
-                        prevFrameStatus = 0;
-
                     }
+                    catch (OperationCanceledException)
+                    {
+                        Log.U($"Stop clicker thread. Time running: {RunningTime:hh\\:mm\\:ss\\.fff}");
+                        OnStopped?.Invoke();
+                    }
+                    catch (OnlineActionsException e)
+                    {
+                        string message = $"Stop clicker. Online action exception: {e.Info}\n\nTime running: {RunningTime:hh\\:mm\\:ss\\.fff}";
+                        Log.F(message);
+                        OnStopped?.Invoke();
+                        OnFailed?.Invoke(message);
+                    }
+                    catch (Exception e)
+                    {
+                        Log.F($"Unhandled exception:\n{e.Message}\n\nInner message: {e.InnerException?.Message}\n\nCall stack:\n{e.StackTrace}\n\nTime running: {RunningTime:hh\\:mm\\:ss\\.fff}");
+                        OnStopped?.Invoke();
+                        OnFailed?.Invoke($"Error happened while executing clicker:\n{e.Message}\n\nInner message: {e.InnerException?.Message}\n\nCall stack:\n{e.StackTrace}\n\nTime running: {RunningTime:hh\\:mm\\:ss\\.fff}\n\nCurrent time: {DateTime.Now:dd.MM.yyyy HH:mm:ss.fff}");
+                    }
+
+                    break;
                 }
             }
-            catch (OperationCanceledException)
+            finally
             {
-                Log.U($"Stop clicker thread. Time running: {RunningTime:hh\\:mm\\:ss\\.fff}");
-                OnStopped?.Invoke();
-            }
-            catch (OnlineActionsException e)
-            {
-                string message = $"Stop clicker. Online action exception: {e.Info}\n\nTime running: {RunningTime:hh\\:mm\\:ss\\.fff}";
-                Log.F(message);
-                OnStopped?.Invoke();
-                OnFailed?.Invoke(message);
-            }
-            catch (Exception e)
-            {
-                Log.F($"Unhandled exception:\n{e.Message}\n\nInner message: {e.InnerException?.Message}\n\nCall stack:\n{e.StackTrace}\n\nTime running: {RunningTime:hh\\:mm\\:ss\\.fff}");
-                OnStopped?.Invoke();
-                OnFailed?.Invoke($"Error happened while executing clicker:\n{e.Message}\n\nInner message: {e.InnerException?.Message}\n\nCall stack:\n{e.StackTrace}\n\nTime running: {RunningTime:hh\\:mm\\:ss\\.fff}\n\nCurrent time: {DateTime.Now:dd.MM.yyyy HH:mm:ss.fff}");
+                lock (stateLock)
+                {
+                    shouldAutoRestart = restartRequested && !userStopRequested && testMode == TestMode.None;
+                    restartRequested = false;
+                    clickerThread = null;
+                    timeRunningThread = null;
+                    SetDefaultThreadStateLocked();
+                }
+                DisposeAutomationResources();
+                workerExitedEvent.Set();
             }
 
-            clickerThread = null!;
-            SetDefaultThreadState();
-
-            if (restartRequested && testMode == TestMode.None)
+            if (shouldAutoRestart)
             {
-                RestartThread();
+                if (restartGuard.TryConsumeThreadRestart("WorkerLoop", out string? blockReason))
+                {
+                    var snap = restartGuard.GetSnapshot();
+                    Log.W($"Scheduling automatic thread restart (threadRestarts={snap.ThreadRestartsInWindow}/{restartGuard.MaxThreadRestartsInWindow}, gameRestarts={snap.RestartsInWindow}/{restartGuard.MaxRestartsInWindow}).");
+                    RestartThread();
+                }
+                else
+                {
+                    Log.F(blockReason!);
+                    OnFailed?.Invoke(blockReason + "\nBot stopped to prevent an infinite restart loop.");
+                }
             }
-
         }
 
         public void DoActionsBeforeReplay()

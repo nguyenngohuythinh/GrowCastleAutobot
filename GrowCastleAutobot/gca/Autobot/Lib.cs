@@ -1,5 +1,6 @@
 ﻿using gca.Classes;
 using gca.Classes.SettingsScripts;
+using gca.Classes.Automation;
 using gca.Enums;
 using gca.Script;
 using gca.Structs;
@@ -219,6 +220,17 @@ namespace gca
         }
         public bool CheckWindowState()
         {
+            if (backgroundMode)
+            {
+                if (useAdb)
+                {
+                    adbTarget?.Validate();
+                    return true;
+                }
+                using var dpi = new PhysicalPixels();
+                backgroundTarget?.Validate();
+                return true;
+            }
             (int x, int y, int width, int height) = GetWindowInfo(hwnd);
 
             if ((x == -32000 && y == -32000) || width != Cst.WINDOW_WIDTH || height != Cst.WINDOW_HEIGHT)
@@ -286,7 +298,7 @@ namespace gca
                 return;
             }
             Log.I("Mimic check");
-            currentScreen = Colormode(4, currentScreen);
+            ReplaceCurrentScreen(Colormode(4, currentScreen));
             if (PixelIn(Cst.MimicBounds, Cst.White, out var ret))
             {
                 double mimic_randomizer = new Random().NextDouble() * 100.0;
@@ -566,12 +578,15 @@ namespace gca
 
                     if (!string.IsNullOrEmpty(latestVersion))
                     {
-                        DateTime myVersionDateTime = DateTime.Parse(AppVersion);
-                        DateTime latestVersionDateTime = DateTime.Parse(latestVersion);
-
-                        if(myVersionDateTime < latestVersionDateTime)
+                        const string versionDateFormat = "dd.MM.yyyy HH:mm";
+                        string currentVersionText = Regex.Match(AppVersion ?? string.Empty, Cst.VERSION_REGEX).Value;
+                        if (DateTime.TryParseExact(currentVersionText, versionDateFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime myVersionDateTime) &&
+                            DateTime.TryParseExact(latestVersion, versionDateFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime latestVersionDateTime))
                         {
-                            OnLatestVersionLabelUpdate?.Invoke(latestVersion);
+                            if (myVersionDateTime < latestVersionDateTime)
+                            {
+                                OnLatestVersionLabelUpdate?.Invoke(latestVersion);
+                            }
                         }
                     }
                 }
@@ -1459,8 +1474,15 @@ namespace gca
                 Log.E("too long loading");
                 if (restartIfNotLoading)
                 {
-                    Log.E("Will call restart");
-                    Restart();
+                    if (restartGuard.IsRestartInProgress)
+                    {
+                        Log.W("EnterGC timed out while a restart sequence is already active; skipping recursive Restart() call.");
+                    }
+                    else
+                    {
+                        Log.E("Will call restart");
+                        Restart();
+                    }
                 }
                 Log.ST();
             }
@@ -1468,31 +1490,65 @@ namespace gca
 
         public void Reset()
         {
-            freezeDetectionEnabled = false;
+            if (backgroundMode)
+                throw new AutomationException(AutomationErrorKind.GameStateUnknown, "Game state unknown: emulator reset requires manual intervention in Background mode.");
 
-            Log.R($"LDPlayer reset");
-            if (LDConsoleReboot())
+            bool acquiredGuard = false;
+            if (!restartGuard.IsRestartInProgress)
             {
-                Log.R("LDPlayer started");
-                Wait(10_000);
-                EnterGC(true);
-                return;
+                if (!restartGuard.TryBeginRestart("Reset", out string? blockReason))
+                {
+                    Log.F(blockReason!);
+                    OnFailed?.Invoke(blockReason + "\nBot stopped to prevent an infinite restart loop.");
+                    Halt();
+                }
+                acquiredGuard = true;
             }
 
-            G();
+            try
+            {
+                freezeDetectionEnabled = false;
 
-            Log.E("LDPlayer didn't load.");
+                Log.R("LDPlayer reset");
+                if (LDConsoleReboot())
+                {
+                    Log.R("LDPlayer started");
+                    Wait(10_000);
+                    // Never recurse back into Restart() from inside Reset(); outer loop or Halt handles failure.
+                    EnterGC(restartIfNotLoading: false);
+                    if (restarted)
+                    {
+                        return;
+                    }
+                    Log.E("Grow Castle did not load after LDPlayer reboot.");
+                }
+                else
+                {
+                    Log.E("LDPlayer didn't load.");
+                }
 
-            ScreenshotError(screenshotLDPlayerLoadFail, Cst.SCREENSHOT_LDPLAYER_LOAD_FAIL_PATH);
+                try { G(); } catch (AutomationException ex) { Log.W($"Capture after failed reset: {ex.Message}"); }
 
-            Log.ST();
+                ScreenshotError(screenshotLDPlayerLoadFail, Cst.SCREENSHOT_LDPLAYER_LOAD_FAIL_PATH);
+                Log.ST();
 
-            restartRequested = false;
-            Halt();
+                Halt();
+            }
+            finally
+            {
+                if (acquiredGuard)
+                    restartGuard.EndRestart();
+            }
         }
 
         public void MakeCleanup()
         {
+            if (backgroundMode)
+            {
+                Log.I("Background mode: skipping emulator reboot during scheduled cleanup.");
+                UpdateCleanupTime();
+                return;
+            }
             Log.I("Do cleanup");
             freezeDetectionEnabled = false;
 
@@ -1528,32 +1584,53 @@ namespace gca
 
         public void Restart()
         {
-            Log.R("Restart");
-            int restartCounter = 0;
-            restarted = false;
-            freezeDetectionEnabled = false;
+            if (backgroundMode)
+                throw new AutomationException(AutomationErrorKind.GameStateUnknown, "Game state unknown: restart requested. Inspect the game and resume manually.");
 
-            while (!restarted && restartCounter < maxRestartsForReset + 1)
+            if (!restartGuard.TryBeginRestart("Restart", out string? blockReason))
             {
+                Log.F(blockReason!);
+                OnFailed?.Invoke(blockReason + "\nBot stopped to prevent an infinite restart loop.");
+                Halt();
+            }
 
-                restartCounter++;
-                Log.R($"Restart {restartCounter}");
+            try
+            {
+                var snap = restartGuard.GetSnapshot();
+                Log.R($"Restart started (inWindow={snap.RestartsInWindow}/{restartGuard.MaxRestartsInWindow}, consecutive={snap.Consecutive}/{restartGuard.MaxConsecutiveRestarts})");
 
-                if (restartCounter < maxRestartsForReset + 1)
+                int maxAttempts = Math.Max(1, maxRestartsForReset);
+                int restartCounter = 0;
+                restarted = false;
+                freezeDetectionEnabled = false;
+
+                while (!restarted && restartCounter < maxAttempts + 1)
                 {
-                    SafeQuitGC();
-                    EnterGC();
+                    C();
+                    restartCounter++;
+                    Log.R($"Restart attempt {restartCounter}/{maxAttempts + 1}");
+
+                    if (restartCounter < maxAttempts + 1)
+                    {
+                        SafeQuitGC();
+                        EnterGC(restartIfNotLoading: false);
+                    }
+                    else
+                    {
+                        Log.E($"{maxAttempts} restarts in a row made. LDPlayer reset will be called");
+                        Reset();
+                    }
                 }
-                else
+                if (!restarted)
                 {
-                    Log.E($"{maxRestartsForReset} restarts in a row made. LDPlayer reset will be called");
-                    Reset();
+                    Log.F("Unknown problem. Couldn't load Grow Castle after restart and reset.");
+                    OnFailed?.Invoke("Grow Castle failed to load after restart and emulator reset. Bot stopped.");
+                    Halt();
                 }
             }
-            if (!restarted)
+            finally
             {
-                Log.F($"Unknown problem. couldnt load gc.");
-                Halt();
+                restartGuard.EndRestart();
             }
         }
 
@@ -1901,7 +1978,7 @@ namespace gca
 
             ScreenshotError(true, Cst.SCREENSHOT_HINT_PATH, true);
             Log.F($"unknown hint detected");
-            WinAPI.SetForegroundWindow(hwnd);
+            if (!backgroundMode) WinAPI.SetForegroundWindow(hwnd);
             screenshotCache.SaveAllToFolder(Cst.SCREENSHOT_ERROR_SCREEN_CACHE_PATH);
 
             ScreenshotError(true, Cst.SCREENSHOT_HINT_PATH, true);
@@ -3447,6 +3524,8 @@ namespace gca
 
         public void EscClickStart()
         {
+            if (backgroundMode)
+                throw new AutomationException("Game state unknown: no recognized game/menu after waiting. No ESC or restart was sent.");
 
             Log.W($"try close overlap");
             Log.ST();
